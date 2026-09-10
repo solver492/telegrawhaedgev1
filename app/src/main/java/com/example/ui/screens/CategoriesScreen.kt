@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Autorenew
@@ -63,6 +64,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.entity.CategoryEntity
@@ -187,254 +189,163 @@ fun CategoriesScreen(
                 }
             } else {
                 items(categories, key = { it.id }) { cat ->
-                    val assignedAgent = agents.find { it.id == cat.assignedAgentId }
                     val currentCount = products.count { it.categoryId == cat.id }
+                    val agentName = if (cat.aiAgentName.isNotBlank()) cat.aiAgentName else "Agent ${cat.name}"
 
                     Card(
                         colors = CardDefaults.cardColors(containerColor = ElegantDarkSurface),
                         border = BorderStroke(1.dp, ElegantDarkBorder),
                         shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth().testTag("category_card_${cat.id}")
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { categoryForAgentConfig = cat }
+                            .testTag("category_card_${cat.id}")
                     ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Partie gauche: Icône + Noms + Agent
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = ElegantPurpleAccent.copy(alpha = 0.15f),
-                                        modifier = Modifier.size(40.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            if (!cat.icon.isNullOrBlank()) {
-                                                Text(cat.icon, fontSize = 20.sp)
-                                            } else {
-                                                val icon = when (cat.iconName) {
-                                                    "Devices" -> Icons.Default.Devices
-                                                    "Checkroom" -> Icons.Default.Checkroom
-                                                    else -> Icons.Default.Category
-                                                }
-                                                Icon(icon, contentDescription = null, tint = ElegantPurpleAccent, modifier = Modifier.size(20.dp))
-                                            }
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(
-                                                cat.name,
-                                                color = ElegantTextPrimary,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 15.sp
-                                            )
-                                            if (!cat.nameAr.isNullOrBlank()) {
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Text(
-                                                    "• ${cat.nameAr}",
-                                                    color = ElegantPurpleAccent,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    fontSize = 13.sp
-                                                )
-                                            }
-                                        }
-                                        Text(
-                                            "${currentCount.coerceAtLeast(cat.productCount)} articles référencés",
-                                            color = ElegantTextSecondary,
-                                            fontSize = 11.sp
-                                        )
-                                    }
-                                }
-
-                                Row {
-                                    IconButton(onClick = { categoryToEdit = cat }, modifier = Modifier.size(28.dp)) {
-                                        Icon(Icons.Default.Edit, contentDescription = "Modifier", tint = ElegantTextSecondary, modifier = Modifier.size(16.dp))
-                                    }
-                                    IconButton(onClick = { viewModel.deleteCategory(cat) }, modifier = Modifier.size(28.dp)) {
-                                        Icon(Icons.Default.Delete, contentDescription = "Supprimer", tint = Color(0xFFEF5350), modifier = Modifier.size(16.dp))
-                                    }
-                                }
-                            }
-
-                            if (cat.description.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    cat.description,
-                                    color = ElegantTextSecondary,
-                                    fontSize = 12.sp,
-                                    lineHeight = 16.sp
-                                )
-                            }
-
-                            // Aperçu des produits associés
-                            val catProducts = products.filter { it.categoryId == cat.id }
-                            if (catProducts.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                // Icône emoji grande taille
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = ElegantPurpleAccent.copy(alpha = 0.12f),
+                                    modifier = Modifier.size(46.dp)
                                 ) {
-                                    catProducts.take(2).forEach { prod ->
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = ElegantDarkSurfaceVariant.copy(alpha = 0.5f),
-                                            border = BorderStroke(1.dp, ElegantDarkBorder)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = prod.title.take(18) + if (prod.title.length > 18) "…" else "",
-                                                    fontSize = 10.sp,
-                                                    color = ElegantTextPrimary,
-                                                    maxLines = 1
-                                                )
+                                    Box(contentAlignment = Alignment.Center) {
+                                        if (!cat.icon.isNullOrBlank()) {
+                                            Text(cat.icon, fontSize = 24.sp)
+                                        } else {
+                                            val icon = when (cat.iconName) {
+                                                "Devices" -> Icons.Default.Devices
+                                                "Checkroom" -> Icons.Default.Checkroom
+                                                else -> Icons.Default.Category
                                             }
+                                            Icon(
+                                                icon,
+                                                contentDescription = null,
+                                                tint = ElegantPurpleAccent,
+                                                modifier = Modifier.size(24.dp)
+                                            )
                                         }
                                     }
-                                    if (catProducts.size > 2) {
-                                        Text(
-                                            text = "+${catProducts.size - 2} autres",
-                                            fontSize = 10.sp,
-                                            color = ElegantPurpleAccent,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                    }
                                 }
-                            }
 
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            // Panneau Agent IA Catégorie & Routage WhatsApp
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = ElegantDarkBg,
-                                border = BorderStroke(1.dp, if (assignedAgent != null || cat.aiAgentPrompt.isNotBlank()) WhatsAppGreen.copy(alpha = 0.5f) else ElegantDarkBorder),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                // Colonne: Nom catégorie + Nom arabe + Badge Agent
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                                    modifier = Modifier.weight(1f, fill = false)
+                                ) {
+                                    // 1. Nom catégorie (français) + Compteur
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Default.Psychology, contentDescription = null, tint = WhatsAppGreen, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            val agentDisplay = if (cat.aiAgentName.isNotBlank()) cat.aiAgentName else (assignedAgent?.name ?: "Agent IA ${cat.name}")
+                                        Text(
+                                            text = cat.name,
+                                            color = ElegantTextPrimary,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        val displayCount = currentCount.coerceAtLeast(cat.productCount)
+                                        if (displayCount > 0) {
                                             Text(
-                                                agentDisplay,
-                                                color = ElegantTextPrimary,
-                                                fontWeight = FontWeight.SemiBold,
+                                                text = "($displayCount)",
+                                                color = ElegantTextSecondary,
                                                 fontSize = 12.sp
                                             )
                                         }
-
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            Surface(
-                                                shape = RoundedCornerShape(4.dp),
-                                                color = ElegantPurpleAccent.copy(alpha = 0.15f)
-                                            ) {
-                                                Text(
-                                                    "T° ${cat.aiAgentTemperature}",
-                                                    color = ElegantPurpleAccent,
-                                                    fontSize = 9.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                                                )
-                                            }
-
-                                            Surface(
-                                                shape = RoundedCornerShape(4.dp),
-                                                color = WhatsAppGreen.copy(alpha = 0.15f),
-                                                modifier = Modifier.clickable { categoryForAgentConfig = cat }
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                ) {
-                                                    Icon(Icons.Default.Tune, contentDescription = null, tint = WhatsAppGreen, modifier = Modifier.size(10.dp))
-                                                    Spacer(modifier = Modifier.width(2.dp))
-                                                    Text(
-                                                        "Prompt IA",
-                                                        color = WhatsAppGreen,
-                                                        fontSize = 9.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
-                                                }
-                                            }
-                                        }
                                     }
 
-                                    if (cat.aiAgentPrompt.isNotBlank()) {
+                                    // 2. Nom arabe (si disponible)
+                                    if (!cat.nameAr.isNullOrBlank()) {
                                         Text(
-                                            cat.aiAgentPrompt.take(120) + if (cat.aiAgentPrompt.length > 120) "…" else "",
+                                            text = cat.nameAr,
                                             color = ElegantTextSecondary,
-                                            fontSize = 11.sp,
-                                            lineHeight = 14.sp
+                                            fontSize = 12.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
 
-                                    // Ligne de routage instance ou agent parent
-                                    Box(modifier = Modifier.fillMaxWidth()) {
+                                    // 3. Agent IA en dessous avec badge
+                                    Surface(
+                                        color = WhatsAppGreen.copy(alpha = 0.15f),
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.clickable { categoryForAgentConfig = cat }
+                                    ) {
                                         Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable { expandedAgentMenuCatId = cat.id },
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                         ) {
                                             Text(
-                                                "Routage agent parent : ${assignedAgent?.name ?: "Automatique (par mots-clés)"}",
-                                                color = ElegantTextSecondary,
-                                                fontSize = 10.sp
+                                                text = "🤖 $agentName",
+                                                color = WhatsAppGreen,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
                                             )
-                                            Text(
-                                                "Changer ▾",
-                                                color = ElegantPurpleAccent,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                        }
-
-                                        DropdownMenu(
-                                            expanded = expandedAgentMenuCatId == cat.id,
-                                            onDismissRequest = { expandedAgentMenuCatId = null },
-                                            modifier = Modifier.background(ElegantDarkSurface)
-                                        ) {
-                                            DropdownMenuItem(
-                                                text = { Text("Routage Automatique (Par défaut)", color = ElegantTextSecondary, fontSize = 12.sp) },
-                                                leadingIcon = { Icon(Icons.Default.Autorenew, contentDescription = null, tint = ElegantTextSecondary, modifier = Modifier.size(16.dp)) },
-                                                onClick = {
-                                                    viewModel.updateCategoryAgent(cat.id, null)
-                                                    expandedAgentMenuCatId = null
-                                                }
-                                            )
-                                            agents.forEach { ag ->
-                                                DropdownMenuItem(
-                                                    text = {
-                                                        Column {
-                                                            Text(ag.name, color = ElegantTextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                                            Text(ag.role, color = ElegantTextSecondary, fontSize = 10.sp)
-                                                        }
-                                                    },
-                                                    leadingIcon = { Icon(Icons.Default.SmartToy, contentDescription = null, tint = WhatsAppGreen, modifier = Modifier.size(16.dp)) },
-                                                    onClick = {
-                                                        viewModel.updateCategoryAgent(cat.id, ag.id)
-                                                        expandedAgentMenuCatId = null
-                                                    }
-                                                )
-                                            }
                                         }
                                     }
                                 }
+                            }
+
+                            // Actions compactes à droite
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                IconButton(
+                                    onClick = { categoryForAgentConfig = cat },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Tune,
+                                        contentDescription = "Config IA",
+                                        tint = WhatsAppGreen,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { categoryToEdit = cat },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Edit,
+                                        contentDescription = "Modifier",
+                                        tint = ElegantTextSecondary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { viewModel.deleteCategory(cat) },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "Supprimer",
+                                        tint = Color(0xFFEF5350),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                    contentDescription = "Détails",
+                                    tint = ElegantTextSecondary.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                         }
                     }

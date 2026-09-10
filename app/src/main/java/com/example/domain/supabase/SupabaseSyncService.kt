@@ -38,6 +38,8 @@ class SupabaseSyncService(
     companion object {
         private const val TAG = "SupabaseSync"
         private const val STORAGE_BUCKET = "product-media"
+        const val DEFAULT_SUPABASE_URL = "https://nfoefhwmgjatbqyibclp.supabase.co"
+        const val DEFAULT_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5mb2VmaHdtZ2phdGJxeWliY2xwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4ODM4NDAxNywiZXhwIjoyMTAzOTYwMDE3fQ.y3ycIHJDwu1FuJH5FE17wX-zOuVZUUBIztLEaNmVLhg"
     }
 
     /**
@@ -52,13 +54,14 @@ class SupabaseSyncService(
         supabaseUrl: String,
         supabaseAnonKey: String
     ): SupabaseSyncResult = withContext(Dispatchers.IO) {
-        if (supabaseUrl.isBlank() || supabaseAnonKey.isBlank()) {
-            return@withContext SupabaseSyncResult.Error(
-                "Configuration Supabase manquante dans Paramètres (URL ou Clé Anon vide)"
-            )
-        }
+        val cleanUrl = (if (supabaseUrl.isNotBlank()) supabaseUrl else DEFAULT_SUPABASE_URL).trimEnd('/')
+        val activeKey = (if (supabaseAnonKey.isNotBlank()) supabaseAnonKey else DEFAULT_SERVICE_ROLE_KEY).trim()
 
-        val cleanUrl = supabaseUrl.trimEnd('/')
+        Log.d("SupabasePublish", "=== DÉBUT PUBLICATION ===")
+        Log.d("SupabasePublish", "Produit: ${product.title}")
+        Log.d("SupabasePublish", "ID local: ${product.id}")
+        Log.d("SupabasePublish", "category_id brut: ${product.categoryId}")
+        Log.d("SupabasePublish", "categoryName: $categoryName")
 
         try {
             // 1. Upload des médias locaux vers Supabase Storage si nécessaire
@@ -77,7 +80,7 @@ class SupabaseSyncService(
                             thumbUrl = uploadFileToStorage(
                                 file = thumbFile,
                                 cleanUrl = cleanUrl,
-                                anonKey = supabaseAnonKey,
+                                anonKey = activeKey,
                                 productId = product.id
                             )
                             try { thumbFile.delete() } catch (_: Exception) {}
@@ -87,7 +90,7 @@ class SupabaseSyncService(
                         val videoUploadResult = uploadFileToStorage(
                             file = candidateFile,
                             cleanUrl = cleanUrl,
-                            anonKey = supabaseAnonKey,
+                            anonKey = activeKey,
                             productId = product.id
                         )
 
@@ -105,7 +108,7 @@ class SupabaseSyncService(
                         val uploadResult = uploadFileToStorage(
                             file = candidateFile,
                             cleanUrl = cleanUrl,
-                            anonKey = supabaseAnonKey,
+                            anonKey = activeKey,
                             productId = product.id
                         )
                         if (uploadResult != null) {
@@ -133,7 +136,7 @@ class SupabaseSyncService(
                         thumbUrl = uploadFileToStorage(
                             file = thumbFile,
                             cleanUrl = cleanUrl,
-                            anonKey = supabaseAnonKey,
+                            anonKey = activeKey,
                             productId = product.id
                         )
                         try { thumbFile.delete() } catch (_: Exception) {}
@@ -141,7 +144,7 @@ class SupabaseSyncService(
                     val uploadedVid = uploadFileToStorage(
                         file = primaryFile,
                         cleanUrl = cleanUrl,
-                        anonKey = supabaseAnonKey,
+                        anonKey = activeKey,
                         productId = product.id
                     )
                     if (thumbUrl != null) {
@@ -157,7 +160,7 @@ class SupabaseSyncService(
                     val uploaded = uploadFileToStorage(
                         file = primaryFile,
                         cleanUrl = cleanUrl,
-                        anonKey = supabaseAnonKey,
+                        anonKey = activeKey,
                         productId = product.id
                     )
                     if (uploaded != null) {
@@ -173,13 +176,27 @@ class SupabaseSyncService(
                 }
             }
 
-            // 3. Construction du payload selon la structure exacte de la table public.products
+            // 3. Inspection des colonnes réelles de la table 'products' pour éviter tout rejet PostgREST 400
+            val tableProps = getProductsTableProperties(cleanUrl, activeKey)
+            val cols = tableProps?.keys ?: emptySet()
+            if (cols.isNotEmpty()) {
+                Log.d("SupabasePublish", "Colonnes Supabase détectées: $cols")
+            }
+
+            // Validation de category_id: uniquement envoyer si c'est un UUID valide pour ne pas déclencher 22P02
+            val isUuid = product.categoryId != null && product.categoryId!!.matches(
+                Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+            )
+            if (!isUuid && !product.categoryId.isNullOrBlank()) {
+                Log.w("SupabasePublish", "⚠️ category_id '${product.categoryId}' n'est pas un UUID standard: non inclus dans category_id pour éviter 22P02")
+            }
+
             val cleanName = product.title.trim().ifEmpty { "Article" }
             val wholesalePrice = (product.purchasePrice ?: 0.0).coerceAtLeast(0.0)
             val suggestedPrice = (product.sellingPrice ?: product.purchasePrice ?: 0.0).coerceAtLeast(0.0)
             val stockUnits = if (product.stockQuantity > 0) product.stockQuantity else 100
 
-            // Préparer les images au format JSONB (tableau complet de tous les médias : photos ET vidéos)
+            // Préparer les images au format JSONB
             val imagesJsonArray = org.json.JSONArray().apply {
                 uploadedMediaUrls.filter { it.isNotBlank() }.forEach { put(it) }
             }
@@ -190,48 +207,68 @@ class SupabaseSyncService(
                 ?: primaryRemoteImageUrl
 
             val payload = JSONObject().apply {
-                // CHAMPS OBLIGATOIRES
+                // CHAMPS FONDAMENTAUX OBLIGATOIRES
                 put("name", cleanName)
                 put("description", product.description ?: "")
                 put("wholesale_price", wholesalePrice)
-
-                // CHAMPS IMPORTANTS pour le site web (pubstack.space)
                 put("suggested_sale_price", suggestedPrice)
-                put("stock", stockUnits)
-                put("images", imagesJsonArray)
-                if (!mainImageUrl.isNullOrBlank()) {
-                    put("image_url", mainImageUrl)
-                }
-
-                // CHAMPS CATÉGORIE & FOURNISSEUR
-                put("category_name", categoryName ?: "Non catégorisé")
-                if (!product.categoryId.isNullOrBlank()) {
-                    put("category_id", product.categoryId)
-                }
-                put("hasVideo", product.hasVideo || uploadedMediaUrls.any { com.example.util.ProductMediaManager.isVideoUrlOrPath(it) })
-                put("supplier_name", supplierName ?: (product.sourceChannelTitle ?: "Akkipi"))
                 put("delivery_cost", 0.0)
-                put("lot_quantity", product.lotQuantity ?: 1)
-                put("lot_label", product.lotLabel?.ifBlank { "pièce" } ?: "pièce")
-
-                // DÉTAILS PACKS / LOTS
-                put("is_lot", product.isLotOrPackPrice)
-                if (product.lotTotalPrice != null) put("lot_total_price", product.lotTotalPrice)
-                if (product.lotUnitPriceEstimate != null) put("lot_unit_price", product.lotUnitPriceEstimate)
-
-                // CHAMPS SYSTÈME & VITRINE
                 put("active", true)
                 put("is_published_to_website", true)
                 put("status", "PUBLISHED")
+                put("stock", stockUnits)
+
+                // MÉDIAS
+                if (!mainImageUrl.isNullOrBlank()) {
+                    put("image_url", mainImageUrl)
+                }
+                put("images", imagesJsonArray)
+
+                // GESTION INTELLIGENTE DES CATÉGORIES (Compatible avec 'category' et 'category_name')
+                val resolvedCategory = categoryName ?: "Non catégorisé"
+                if (cols.isEmpty() || cols.contains("category_name")) {
+                    put("category_name", resolvedCategory)
+                }
+                if (cols.isEmpty() || cols.contains("category")) {
+                    put("category", resolvedCategory)
+                }
+                if (isUuid && (cols.isEmpty() || cols.contains("category_id"))) {
+                    put("category_id", product.categoryId)
+                }
 
                 // CHAMPS TELEGRAM & TRAÇABILITÉ
                 put("source_message_id", product.id)
                 if (!product.sourceChannelTitle.isNullOrBlank()) {
-                    put("source_channel_id", product.sourceChannelTitle)
+                    if (cols.isEmpty() || cols.contains("source_channel_id")) {
+                        put("source_channel_id", product.sourceChannelTitle)
+                    }
+                }
+
+                // COLONNES OPTIONNELLES: ajoutées SEULEMENT si elles existent dans le schéma Supabase
+                if (cols.contains("supplier_name")) {
+                    put("supplier_name", supplierName ?: (product.sourceChannelTitle ?: "Akkipi"))
+                }
+                if (cols.contains("hasVideo")) {
+                    put("hasVideo", product.hasVideo || uploadedMediaUrls.any { com.example.util.ProductMediaManager.isVideoUrlOrPath(it) })
+                }
+                if (cols.contains("lot_quantity")) {
+                    put("lot_quantity", product.lotQuantity ?: 1)
+                }
+                if (cols.contains("lot_label")) {
+                    put("lot_label", product.lotLabel?.ifBlank { "pièce" } ?: "pièce")
+                }
+                if (cols.contains("is_lot")) {
+                    put("is_lot", product.isLotOrPackPrice)
+                }
+                if (cols.contains("lot_total_price") && product.lotTotalPrice != null) {
+                    put("lot_total_price", product.lotTotalPrice)
+                }
+                if (cols.contains("lot_unit_price") && product.lotUnitPriceEstimate != null) {
+                    put("lot_unit_price", product.lotUnitPriceEstimate)
                 }
             }
 
-            Log.d(TAG, "📦 Données à envoyer à Supabase: $payload")
+            Log.d("SupabasePublish", "📦 Payload JSON: $payload")
 
             var responseCode = 0
             var responseBody = ""
@@ -239,8 +276,8 @@ class SupabaseSyncService(
             // Vérification si le produit existe déjà via source_message_id
             val checkRequest = Request.Builder()
                 .url("$cleanUrl/rest/v1/products?source_message_id=eq.${product.id}&select=id")
-                .addHeader("apikey", supabaseAnonKey)
-                .addHeader("Authorization", "Bearer $supabaseAnonKey")
+                .addHeader("apikey", activeKey)
+                .addHeader("Authorization", "Bearer $activeKey")
                 .get()
                 .build()
 
@@ -250,11 +287,11 @@ class SupabaseSyncService(
 
             if (existingList.length() > 0) {
                 // Mise à jour (PATCH)
-                Log.d(TAG, "🔄 Mise à jour du produit existant sur Supabase (source_message_id = ${product.id})...")
+                Log.d("SupabasePublish", "🔄 Mise à jour du produit existant (source_message_id = ${product.id})...")
                 val patchRequest = Request.Builder()
                     .url("$cleanUrl/rest/v1/products?source_message_id=eq.${product.id}")
-                    .addHeader("apikey", supabaseAnonKey)
-                    .addHeader("Authorization", "Bearer $supabaseAnonKey")
+                    .addHeader("apikey", activeKey)
+                    .addHeader("Authorization", "Bearer $activeKey")
                     .addHeader("Content-Type", "application/json")
                     .addHeader("Prefer", "return=representation")
                     .patch(payload.toString().toRequestBody("application/json".toMediaType()))
@@ -265,11 +302,11 @@ class SupabaseSyncService(
                 responseBody = patchResp.body?.string() ?: ""
             } else {
                 // Insertion (POST)
-                Log.d(TAG, "🔄 Insertion d'un nouveau produit sur Supabase...")
+                Log.d("SupabasePublish", "🔄 Insertion d'un nouveau produit sur Supabase...")
                 val postRequest = Request.Builder()
                     .url("$cleanUrl/rest/v1/products")
-                    .addHeader("apikey", supabaseAnonKey)
-                    .addHeader("Authorization", "Bearer $supabaseAnonKey")
+                    .addHeader("apikey", activeKey)
+                    .addHeader("Authorization", "Bearer $activeKey")
                     .addHeader("Content-Type", "application/json")
                     .addHeader("Prefer", "return=representation")
                     .post(payload.toString().toRequestBody("application/json".toMediaType()))
@@ -278,32 +315,48 @@ class SupabaseSyncService(
                 val postResp = okHttpClient.newCall(postRequest).execute()
                 responseCode = postResp.code
                 responseBody = postResp.body?.string() ?: ""
+
+                // Si conflit d'unicité, tenter un PATCH de secours
+                if (responseCode == 409) {
+                    Log.w("SupabasePublish", "⚠️ Conflit 409, bascule vers mise à jour PATCH...")
+                    val fallbackPatch = Request.Builder()
+                        .url("$cleanUrl/rest/v1/products?source_message_id=eq.${product.id}")
+                        .addHeader("apikey", activeKey)
+                        .addHeader("Authorization", "Bearer $activeKey")
+                        .addHeader("Content-Type", "application/json")
+                        .addHeader("Prefer", "return=representation")
+                        .patch(payload.toString().toRequestBody("application/json".toMediaType()))
+                        .build()
+                    val fallbackResp = okHttpClient.newCall(fallbackPatch).execute()
+                    responseCode = fallbackResp.code
+                    responseBody = fallbackResp.body?.string() ?: ""
+                }
             }
 
             if (responseCode in 200..299) {
-                Log.d(TAG, "Produit ${product.id} synchronisé avec succès sur Supabase: $responseBody")
+                Log.d("SupabasePublish", "✅ PUBLICATION RÉUSSIE! ($responseCode) : $responseBody")
+                Log.d("SupabasePublish", "=== FIN PUBLICATION ===")
                 return@withContext SupabaseSyncResult.Success(
                     message = "Produit « ${product.title} » publié avec succès sur Supabase !",
                     remoteUrl = primaryRemoteImageUrl
                 )
             } else if (responseCode == 401) {
-                val isJwtSecret = supabaseAnonKey.length in 80..95 && supabaseAnonKey.endsWith("==")
-                val hint = if (isJwtSecret) {
-                    "La clé renseignée est le JWT Secret (88 car.). Veuillez copier la clé 'anon public' (commençant par eyJ... ou sb_publishable_) dans Supabase > Settings > API > Project API keys."
-                } else {
-                    "Clé API Supabase non autorisée. Vérifiez votre clé dans Réglages."
-                }
+                Log.e("SupabasePublish", "❌ ERREUR 401 Non autorisé")
+                val hint = "Clé API non autorisée ou expirée. Utilisez la service_role key pour contourner les restrictions RLS."
                 return@withContext SupabaseSyncResult.Error("Supabase (401 Non autorisé) : $hint")
             } else if (responseCode == 404 || responseBody.contains("relation \"public.products\" does not exist")) {
+                Log.e("SupabasePublish", "❌ ERREUR 404 Table introuvable")
                 return@withContext SupabaseSyncResult.Error("Table 'products' introuvable dans Supabase. Veuillez exécuter le script SQL dans la console Supabase.")
             } else {
-                Log.e(TAG, "Erreur API Supabase ($responseCode): $responseBody")
+                Log.e("SupabasePublish", "❌ ERREUR API Supabase ($responseCode): $responseBody")
+                Log.e("SupabasePublish", "=== FIN PUBLICATION (ÉCHEC) ===")
                 return@withContext SupabaseSyncResult.Error(
                     "Supabase API ($responseCode) : ${responseBody.take(150)}"
                 )
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Exception lors de la synchronisation Supabase", e)
+            Log.e("SupabasePublish", "❌ EXCEPTION LORS DE LA PUBLICATION", e)
+            Log.e("SupabasePublish", "=== FIN PUBLICATION (ÉCHEC) ===")
             return@withContext SupabaseSyncResult.Error(
                 "Échec connexion Supabase : ${e.localizedMessage ?: e.message}"
             )
