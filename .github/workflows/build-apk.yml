@@ -1,0 +1,85 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+
+      - name: Show project structure
+        run: |
+          echo "=== PROJECT FILES ==="
+          ls -la
+          echo "=== APP ==="
+          ls -la app || true
+          echo "=== GRADLE ==="
+          gradle --version
+
+
+      - name: Generate Debug Keystore
+        run: |
+          keytool -genkeypair \
+            -keystore debug.keystore \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+
+      - name: Configure CI Environment Secrets
+        run: |
+          echo "Configuring environment variables for Android CI build..."
+          echo "GEMINI_API_KEY=\"${{ secrets.GEMINI_API_KEY }}\"" >> .env
+          echo "SUPABASE_URL=\"${{ secrets.SUPABASE_URL }}\"" >> .env
+          echo "SUPABASE_ANON_KEY=\"${{ secrets.SUPABASE_ANON_KEY }}\"" >> .env
+          echo "TELEGRAM_API_ID=\"${{ secrets.TELEGRAM_API_ID }}\"" >> .env
+          echo "TELEGRAM_API_HASH=\"${{ secrets.TELEGRAM_API_HASH }}\"" >> .env
+
+      - name: Build Debug APK
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: gradle assembleDebug
+
+
+      - name: Find generated APK
+        run: |
+          echo "=== GENERATED APK ==="
+          find app/build -type f -name "*.apk"
+
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Whatedgecontifi-Debug-APK
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
