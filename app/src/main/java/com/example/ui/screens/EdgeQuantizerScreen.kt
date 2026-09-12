@@ -595,7 +595,7 @@ fun InferenceWorkbenchCard(
     val coroutineScope = rememberCoroutineScope()
 
     val sampleQueries = listOf(
-        "Combien coûte le pack pro ?",
+        "Avez-vous ce produit en stock et quel est le prix ?",
         "Statut commande #CMD-9201",
         "Comment configurer Termux ?",
         "Écris un message d'accueil",

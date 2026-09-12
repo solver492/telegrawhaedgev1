@@ -779,4 +779,238 @@ class SupabaseSyncService(
             Log.w(TAG, "Erreur seeding categories Supabase: ${e.message}")
         }
     }
+
+    /**
+     * Interroge dynamiquement Supabase pour charger la fiche produit complète (Titre, Description, Fiche technique,
+     * Prix, Stock en direct, FAQ/Base de connaissances associées) pour l'injecter au runtime dans le System Prompt de l'agent WhatsApp.
+     */
+    suspend fun fetchDynamicProductKnowledge(
+        query: String,
+        supabaseUrl: String = "",
+        supabaseAnonKey: String = ""
+    ): List<DynamicProductKnowledge> = withContext(Dispatchers.IO) {
+        val cleanUrl = (if (supabaseUrl.isNotBlank()) supabaseUrl else DEFAULT_SUPABASE_URL).trimEnd('/')
+        val activeKey = (if (supabaseAnonKey.isNotBlank()) supabaseAnonKey else DEFAULT_SERVICE_ROLE_KEY).trim()
+        val results = mutableListOf<DynamicProductKnowledge>()
+
+        if (cleanUrl.isBlank() || activeKey.isBlank()) {
+            return@withContext emptyList()
+        }
+
+        try {
+            // Nettoyage de la requête client pour la recherche textuelle
+            val sanitizedQuery = query
+                .replace("Bonjour", "", ignoreCase = true)
+                .replace("Bonsoir", "", ignoreCase = true)
+                .replace("Salam", "", ignoreCase = true)
+                .replace("je souhaite commander", "", ignoreCase = true)
+                .replace("je veux commander", "", ignoreCase = true)
+                .replace("je suis intéressé par", "", ignoreCase = true)
+                .replace("intéressé par le produit", "", ignoreCase = true)
+                .replace("le produit", "", ignoreCase = true)
+                .replace("l'article", "", ignoreCase = true)
+                .replace("référence", "", ignoreCase = true)
+                .replace("réf :", "", ignoreCase = true)
+                .replace("ref :", "", ignoreCase = true)
+                .replace("ref:", "", ignoreCase = true)
+                .replace("réf:", "", ignoreCase = true)
+                .replace("svp", "", ignoreCase = true)
+                .replace("merci", "", ignoreCase = true)
+                .trim()
+
+            // 1. Détection d'un ID de produit potentiel (UUID ou format prod-...)
+            val uuidRegex = Regex("""([0-9a-fA-F-]{32,36}|prod-[a-zA-Z0-9_-]+)""")
+            val matchedId = uuidRegex.find(query)?.value
+
+            // 2. Construction de la requête PostgREST vers la table `products`
+            val endpoint = if (matchedId != null) {
+                "$cleanUrl/rest/v1/products?id=eq.$matchedId&select=*"
+            } else if (sanitizedQuery.isNotBlank() && sanitizedQuery.length >= 3) {
+                // Recherche par mots clés dans titre ou description
+                val kw = sanitizedQuery.take(30).replace(" ", "%")
+                "$cleanUrl/rest/v1/products?or=(title.ilike.*$kw*,description.ilike.*$kw*)&select=*&limit=5"
+            } else {
+                "$cleanUrl/rest/v1/products?select=*&order=created_at.desc&limit=10"
+            }
+
+            val request = Request.Builder()
+                .url(endpoint)
+                .addHeader("apikey", activeKey)
+                .addHeader("Authorization", "Bearer $activeKey")
+                .addHeader("Accept", "application/json")
+                .get()
+                .build()
+
+            val response = okHttpClient.newCall(request).execute()
+            val body = response.body?.string()
+
+            if (response.isSuccessful && !body.isNullOrBlank()) {
+                val array = JSONArray(body)
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val id = obj.optString("id", "")
+                    val title = obj.optString("title", "")
+                    val description = obj.optString("description", "")
+                    val sellingPrice = obj.optDouble("selling_price", obj.optDouble("purchase_price", 0.0))
+                    val currency = obj.optString("currency", "MAD")
+                    val stockQuantity = obj.optInt("stock_quantity", 0)
+                    val status = obj.optString("status", "PUBLISHED")
+                    val categoryName = obj.optString("category_name", obj.optString("category_id", ""))
+                    val hasVideo = obj.optBoolean("has_video", false)
+                    val lotLabel = obj.optString("lot_label", "")
+                    val lotQty = obj.optInt("lot_quantity", 1)
+
+                    // Extraction des spécifications techniques / attributs
+                    val specsBuilder = StringBuilder()
+                    if (lotLabel.isNotBlank() && lotLabel != "null") {
+                        specsBuilder.append("Conditionnement: $lotLabel")
+                    }
+                    if (lotQty > 1) {
+                        if (specsBuilder.isNotEmpty()) specsBuilder.append(" | ")
+                        specsBuilder.append("Quantité par lot: $lotQty pièces")
+                    }
+                    val attributesJson = obj.optJSONObject("attributes")
+                    if (attributesJson != null) {
+                        val keys = attributesJson.keys()
+                        while (keys.hasNext()) {
+                            val k = keys.next()
+                            val v = attributesJson.opt(k)
+                            if (specsBuilder.isNotEmpty()) specsBuilder.append(" | ")
+                            specsBuilder.append("$k: $v")
+                        }
+                    }
+
+                    results.add(
+                        DynamicProductKnowledge(
+                            id = id,
+                            title = title,
+                            description = description,
+                            technicalSpecs = specsBuilder.toString(),
+                            sellingPrice = sellingPrice,
+                            currency = if (currency.isBlank() || currency == "null") "MAD" else currency,
+                            stockQuantity = stockQuantity,
+                            status = status,
+                            categoryName = if (categoryName == "null") null else categoryName,
+                            hasVideo = hasVideo
+                        )
+                    )
+                }
+            }
+
+            // 3. Charger également les FAQs / Knowledge Sources dynamiques depuis Supabase si disponibles
+            val faqList = fetchSupabaseKnowledgeFaq(cleanUrl, activeKey)
+            if (faqList.isNotEmpty() && results.isNotEmpty()) {
+                val enrichedResults = results.map { prod ->
+                    prod.copy(faqKnowledge = faqList)
+                }
+                return@withContext enrichedResults
+            }
+
+        } catch (e: Exception) {
+            Log.w(TAG, "Erreur fetchDynamicProductKnowledge Supabase: ${e.message}")
+        }
+
+        return@withContext results
+    }
+
+    /**
+     * Charge les règles et FAQs depuis la table `knowledge_sources` sur Supabase
+     */
+    private fun fetchSupabaseKnowledgeFaq(cleanUrl: String, activeKey: String): List<String> {
+        val faqs = mutableListOf<String>()
+        try {
+            val endpoint = "$cleanUrl/rest/v1/knowledge_sources?select=title,content_data&is_enabled=eq.true&limit=6"
+            val request = Request.Builder()
+                .url(endpoint)
+                .addHeader("apikey", activeKey)
+                .addHeader("Authorization", "Bearer $activeKey")
+                .addHeader("Accept", "application/json")
+                .get()
+                .build()
+
+            val response = okHttpClient.newCall(request).execute()
+            val body = response.body?.string()
+            if (response.isSuccessful && !body.isNullOrBlank()) {
+                val array = JSONArray(body)
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val title = obj.optString("title", "")
+                    val content = obj.optString("content_data", "")
+                    if (content.isNotBlank()) {
+                        faqs.add("$title: $content")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Optionnel
+        }
+        return faqs
+    }
+}
+
+/**
+ * Données dynamiques produit et base de connaissances chargées en direct depuis Supabase
+ */
+data class DynamicProductKnowledge(
+    val id: String,
+    val title: String,
+    val description: String,
+    val technicalSpecs: String,
+    val sellingPrice: Double,
+    val currency: String,
+    val stockQuantity: Int,
+    val status: String,
+    val categoryName: String?,
+    val hasVideo: Boolean,
+    val mediaUrls: List<String> = emptyList(),
+    val faqKnowledge: List<String> = emptyList()
+) {
+    /**
+     * Convertit la fiche produit dynamique en bloc de connaissances textuel pour le System Prompt de l'agent WhatsApp
+     */
+    fun toSystemPromptSnippet(): String {
+        return buildString {
+            append("=== FICHE PRODUIT DYNAMIQUE SUPABASE (EN DIRECT) ===\n")
+            append("• Titre du produit : $title\n")
+            append("• Référence SKU / ID : $id\n")
+            append("• Prix de vente officiel : ${sellingPrice.toInt()} $currency\n")
+            val stockMsg = if (stockQuantity > 0) "DISPONIBLE IMMÉDIATEMENT ($stockQuantity unités en stock)" else "RUPTURE TEMPORAIRE"
+            append("• Stock en temps réel : $stockMsg (Statut catalogue: $status)\n")
+            if (!categoryName.isNullOrBlank()) {
+                append("• Catégorie : $categoryName\n")
+            }
+            if (technicalSpecs.isNotBlank()) {
+                append("• Fiche technique & Spécifications : $technicalSpecs\n")
+            }
+            if (description.isNotBlank()) {
+                append("• Description complète : $description\n")
+            }
+            if (hasVideo) {
+                append("• Vidéo produit : Une vidéo de présentation est consultable sur notre catalogue\n")
+            }
+            if (faqKnowledge.isNotEmpty()) {
+                append("• Règles commerciales & FAQ applicables :\n")
+                faqKnowledge.forEach { append("  - $it\n") }
+            }
+            append("• Modalités de commande : Livraison express 24h-48h partout au Maroc. Paiement à la réception du colis (Cash on Delivery). Possibilité de vérification avant paiement.\n")
+            append("=====================================================")
+        }
+    }
+
+    /**
+     * Conversion en ProductEntity compatible avec le pipeline d'inférence
+     */
+    fun toProductEntity(): ProductEntity {
+        return ProductEntity(
+            id = id,
+            title = title,
+            description = description,
+            sellingPrice = sellingPrice,
+            currency = currency,
+            stockQuantity = stockQuantity,
+            status = status,
+            categoryId = categoryName ?: "autres-produits",
+            hasVideo = hasVideo
+        )
+    }
 }

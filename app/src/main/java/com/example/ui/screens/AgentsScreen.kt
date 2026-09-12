@@ -1033,7 +1033,7 @@ fun AgentPlaygroundDialog(
     }
 
     val sampleQueries = listOf(
-        "Combien coûte le pack pro ?",
+        "Avez-vous ce produit en stock et quel est le prix ?",
         "Statut de ma commande #CMD-9201",
         "Avez-vous des disponibilités ?",
         "Je voudrais parler à un humain"

@@ -1,7 +1,12 @@
 package com.example.ui.components
 
+import android.annotation.SuppressLint
 import android.net.Uri
-import android.widget.MediaController
+import android.view.ViewGroup
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.VideoView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -27,8 +32,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.CircularProgressIndicator
@@ -63,12 +69,13 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.data.local.entity.ParsedMediaItem
+import com.example.util.YouTubeHelper
 import java.io.File
 
 /**
  * Carrousel multimédia fluide pour messages Telegram et fiches Produits.
- * Supporte les photos (avec zoom plein écran) et les vidéos (lecture inline)
- * ordonnées exactement selon la séquence reçue.
+ * Supporte les photos (avec zoom plein écran), les vidéos YouTube (lecture inline iFrame)
+ * et les vidéos MP4/WebM natives (lecture continue sans coupure).
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -105,14 +112,20 @@ fun MediaCarousel(
             modifier = Modifier.fillMaxSize()
         ) { page ->
             val item = mediaItems[page]
-            val displayModel = item.getDisplayModel()
-            val context = LocalContext.current
+            val isYouTube = remember(item.url) { YouTubeHelper.isYouTubeUrl(item.url) }
+            val displayModel = remember(item, isYouTube) {
+                if (isYouTube) {
+                    item.getDisplayModel() ?: YouTubeHelper.getThumbnailUrl(item.url)
+                } else {
+                    item.getDisplayModel()
+                }
+            }
 
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .clickable {
-                        if (!item.isVideo) {
+                        if (!item.isVideo && !isYouTube) {
                             if (onMediaTapped != null) {
                                 onMediaTapped(page)
                             } else {
@@ -122,31 +135,29 @@ fun MediaCarousel(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                if (item.isVideo) {
-                    // Item Vidéo
+                if (item.isVideo || isYouTube) {
                     if (activeInlineVideoIndex == page) {
                         // Lecteur vidéo inline actif
-                        InlineVideoPlayer(
-                            mediaItem = item,
-                            onClose = { activeInlineVideoIndex = -1 },
-                            modifier = Modifier.fillMaxSize()
-                        )
+                        if (isYouTube) {
+                            YouTubeIFramePlayer(
+                                youtubeUrl = item.url ?: "",
+                                onClose = { activeInlineVideoIndex = -1 },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            InlineVideoPlayer(
+                                mediaItem = item,
+                                onClose = { activeInlineVideoIndex = -1 },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                     } else {
                         // Miniature vidéo avec bouton de lecture proéminent
                         VideoThumbnailView(
                             displayModel = displayModel,
+                            isYouTube = isYouTube,
                             onPlayClicked = {
-                                val u = item.url?.lowercase() ?: ""
-                                if (u.contains("youtube.com") || u.contains("youtu.be") || u.contains("vimeo.com") || u.contains("dailymotion")) {
-                                    try {
-                                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, Uri.parse(item.url))
-                                        context.startActivity(intent)
-                                    } catch (e: Exception) {
-                                        activeInlineVideoIndex = page
-                                    }
-                                } else {
-                                    activeInlineVideoIndex = page
-                                }
+                                activeInlineVideoIndex = page
                             },
                             contentScale = contentScale
                         )
@@ -205,7 +216,7 @@ fun MediaCarousel(
     // Modal plein écran haute résolution avec zoom & pan
     fullScreenItemIndex?.let { index ->
         val currentItem = mediaItems.getOrNull(index)
-        if (currentItem != null && !currentItem.isVideo) {
+        if (currentItem != null && !currentItem.isVideo && !YouTubeHelper.isYouTubeUrl(currentItem.url)) {
             FullScreenMediaViewerDialog(
                 mediaItem = currentItem,
                 onDismiss = { fullScreenItemIndex = null }
@@ -277,7 +288,8 @@ private fun PhotoImageView(
 private fun VideoThumbnailView(
     displayModel: Any?,
     onPlayClicked: () -> Unit,
-    contentScale: ContentScale
+    contentScale: ContentScale,
+    isYouTube: Boolean = false
 ) {
     val context = LocalContext.current
 
@@ -292,7 +304,7 @@ private fun VideoThumbnailView(
                     .data(displayModel)
                     .crossfade(true)
                     .build(),
-                contentDescription = "Miniature vidéo",
+                contentDescription = if (isYouTube) "Miniature vidéo YouTube" else "Miniature vidéo",
                 contentScale = contentScale,
                 modifier = Modifier.fillMaxSize()
             )
@@ -314,7 +326,7 @@ private fun VideoThumbnailView(
         // Bouton de lecture central
         Surface(
             shape = CircleShape,
-            color = Color.Black.copy(alpha = 0.75f),
+            color = if (isYouTube) Color(0xFFCC0000).copy(alpha = 0.9f) else Color.Black.copy(alpha = 0.75f),
             border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White),
             modifier = Modifier
                 .size(54.dp)
@@ -330,10 +342,10 @@ private fun VideoThumbnailView(
             }
         }
 
-        // Badge VIDÉO en bas à gauche
+        // Badge VIDÉO ou YOUTUBE en bas à gauche
         Surface(
             shape = RoundedCornerShape(6.dp),
-            color = Color(0xFFE53935).copy(alpha = 0.9f),
+            color = if (isYouTube) Color(0xFFFF0000).copy(alpha = 0.92f) else Color(0xFFE53935).copy(alpha = 0.9f),
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(8.dp)
@@ -350,7 +362,7 @@ private fun VideoThumbnailView(
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = "VIDÉO",
+                    text = if (isYouTube) "YOUTUBE" else "VIDÉO",
                     color = Color.White,
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Bold
@@ -361,20 +373,31 @@ private fun VideoThumbnailView(
 }
 
 /**
- * Lecteur vidéo inline utilisant VideoView natif
+ * Lecteur vidéo YouTube inline exploitant un WebView avec iFrame HTML responsive.
+ * Évite l'interruption par intent externe et permet la lecture directe dans le carrousel.
  */
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun InlineVideoPlayer(
-    mediaItem: ParsedMediaItem,
+fun YouTubeIFramePlayer(
+    youtubeUrl: String,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var isPlaying by remember { mutableStateOf(true) }
-    var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
+    val videoId = remember(youtubeUrl) { YouTubeHelper.extractVideoId(youtubeUrl) ?: "" }
+    val webViewHolder = remember { object { var webView: WebView? = null } }
+    var isLoading by remember { mutableStateOf(true) }
 
     DisposableEffect(Unit) {
         onDispose {
-            videoViewRef?.stopPlayback()
+            try {
+                webViewHolder.webView?.apply {
+                    stopLoading()
+                    loadUrl("about:blank")
+                    destroy()
+                }
+            } catch (e: Exception) {
+                // Ignore cleanup errors
+            }
         }
     }
 
@@ -384,13 +407,116 @@ fun InlineVideoPlayer(
             .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
+        if (videoId.isNotBlank()) {
+            AndroidView(
+                factory = { context ->
+                    WebView(context).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        setBackgroundColor(android.graphics.Color.BLACK)
+                        settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            mediaPlaybackRequiresUserGesture = false
+                            loadWithOverviewMode = true
+                            useWideViewPort = true
+                            cacheMode = WebSettings.LOAD_DEFAULT
+                        }
+                        webChromeClient = WebChromeClient()
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                super.onPageFinished(view, url)
+                                isLoading = false
+                            }
+                        }
+                        val html = YouTubeHelper.buildIFrameHtml(videoId, autoPlay = true)
+                        loadDataWithBaseURL("https://www.youtube.com", html, "text/html", "UTF-8", null)
+                        webViewHolder.webView = this
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Text(
+                text = "Vidéo YouTube indisponible",
+                color = Color.White,
+                fontSize = 13.sp
+            )
+        }
+
+        if (isLoading && videoId.isNotBlank()) {
+            CircularProgressIndicator(
+                color = Color(0xFFFF0000),
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(36.dp)
+            )
+        }
+
+        // Bouton de fermeture en haut à droite
+        IconButton(
+            onClick = {
+                try {
+                    webViewHolder.webView?.apply {
+                        stopLoading()
+                        loadUrl("about:blank")
+                    }
+                } catch (e: Exception) {
+                    // Ignore
+                }
+                onClose()
+            },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(8.dp)
+                .size(32.dp)
+                .background(Color.Black.copy(alpha = 0.7f), CircleShape)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Fermer le lecteur YouTube",
+                tint = Color.White,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+/**
+ * Lecteur vidéo inline utilisant VideoView natif optimisé.
+ * Résout le bug de coupure après 3 secondes (suppression du MediaController système auto-hide,
+ * gestion continue de la boucle de lecture, et contrôles Compose natifs).
+ */
+@Composable
+fun InlineVideoPlayer(
+    mediaItem: ParsedMediaItem,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var isPlaying by remember { mutableStateOf(true) }
+    var isBuffering by remember { mutableStateOf(true) }
+    var showControls by remember { mutableStateOf(false) }
+    val videoViewHolder = remember { object { var videoView: VideoView? = null } }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            videoViewHolder.videoView?.stopPlayback()
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .clickable { showControls = !showControls },
+        contentAlignment = Alignment.Center
+    ) {
         AndroidView(
             factory = { context ->
                 VideoView(context).apply {
-                    val mediaController = MediaController(context)
-                    mediaController.setAnchorView(this)
-                    setMediaController(mediaController)
-
+                    // Ne pas utiliser MediaController car son timeout interne de 3000ms
+                    // coupe et perturbe la hiérarchie de fenêtres Compose.
                     val localCandidate = mediaItem.localPath?.let { File(it) }
                     if (localCandidate != null && localCandidate.exists() && localCandidate.length() > 0) {
                         setVideoPath(localCandidate.absolutePath)
@@ -406,31 +532,101 @@ fun InlineVideoPlayer(
                     }
 
                     setOnPreparedListener { mp ->
+                        isBuffering = false
                         mp.isLooping = true
                         start()
+                        isPlaying = true
                     }
 
-                    setOnErrorListener { _, _, _ ->
-                        true // Géré gracieusement
+                    // Boucle continue sans interruption : relance automatique à la fin
+                    setOnCompletionListener { mp ->
+                        try {
+                            mp.seekTo(0)
+                            mp.start()
+                            isPlaying = true
+                        } catch (e: Exception) {
+                            start()
+                        }
                     }
 
-                    videoViewRef = this
+                    setOnInfoListener { _, what, _ ->
+                        when (what) {
+                            android.media.MediaPlayer.MEDIA_INFO_BUFFERING_START -> isBuffering = true
+                            android.media.MediaPlayer.MEDIA_INFO_BUFFERING_END -> isBuffering = false
+                            android.media.MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START -> isBuffering = false
+                        }
+                        true
+                    }
+
+                    setOnErrorListener { _, what, extra ->
+                        isBuffering = false
+                        android.util.Log.w("InlineVideoPlayer", "Erreur VideoView: what=$what, extra=$extra")
+                        true // Géré gracieusement sans crash dialogue
+                    }
+
+                    videoViewHolder.videoView = this
                 }
             },
             modifier = Modifier.fillMaxSize()
         )
 
+        // Indicateur de chargement / buffering
+        if (isBuffering) {
+            CircularProgressIndicator(
+                color = Color.White,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(36.dp)
+            )
+        }
+
+        // Contrôles Compose superposés (Play / Pause / Replay)
+        AnimatedVisibility(
+            visible = showControls || !isPlaying,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.Center)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = Color.Black.copy(alpha = 0.7f),
+                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White),
+                modifier = Modifier
+                    .size(52.dp)
+                    .clickable {
+                        val vv = videoViewHolder.videoView
+                        if (vv != null) {
+                            if (vv.isPlaying) {
+                                vv.pause()
+                                isPlaying = false
+                            } else {
+                                vv.start()
+                                isPlaying = true
+                            }
+                        }
+                    }
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Pause" else "Reprendre",
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
+        }
+
         // Bouton de fermeture / arrêt en haut à droite
         IconButton(
             onClick = {
-                videoViewRef?.stopPlayback()
+                videoViewHolder.videoView?.stopPlayback()
                 onClose()
             },
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(8.dp)
                 .size(32.dp)
-                .background(Color.Black.copy(alpha = 0.65f), CircleShape)
+                .background(Color.Black.copy(alpha = 0.7f), CircleShape)
         ) {
             Icon(
                 imageVector = Icons.Default.Close,

@@ -68,11 +68,11 @@ data class SelectableModelOption(
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val database = AppDatabase.getDatabase(application)
-    val baileysService = BaileysService(database)
+    val supabaseSyncService = SupabaseSyncService(application)
+    val baileysService = BaileysService(database, supabaseSyncService)
     val modelManager = LocalModelManager(application)
     val bridgeServer = LocalNodeBridgeServer(database, baileysService)
     val termuxSyncEngine = TermuxSyncEngine(database, baileysService, bridgeServer)
-    val supabaseSyncService = SupabaseSyncService(application)
 
     private val _toastMessage = MutableSharedFlow<String>(extraBufferCapacity = 64)
     val toastMessage: SharedFlow<String> = _toastMessage.asSharedFlow()
@@ -296,6 +296,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             // Initialisation de l'automatisation de prompt WhatsApp Baileys
             com.example.domain.whatsapp.WhatsAppPromptAutomationManager.initialize(application)
+
+            // Migration / Purge des anciens prompts hardcodés de l'agent commercial
+            val agentDao = database.agentDao()
+            val existingSalesAgent = agentDao.getAgentById("agent-sales-02")
+            if (existingSalesAgent != null && existingSalesAgent.systemPrompt.contains("Pack Starter")) {
+                agentDao.updateAgent(
+                    existingSalesAgent.copy(
+                        name = "Agent Ventes & Boutique",
+                        systemPrompt = """Tu es un conseiller commercial dynamique et professionnel pour notre boutique en ligne sur WhatsApp.
+Tu renseignes les clients sur les articles du catalogue, confirmes les disponibilités et les prix en direct depuis la base de données.
+Tu présentes les fiches techniques, les caractéristiques et orientes les acheteurs avec courtoisie.
+Rappelle que la livraison est assurée sous 24h-48h partout au Maroc avec paiement sécurisé à la réception du colis (Cash on Delivery).
+Invite chaleureusement le client à confirmer sa commande en fournissant son nom complet, son numéro et sa ville.""".trimIndent()
+                    )
+                )
+            }
         }
     }
 

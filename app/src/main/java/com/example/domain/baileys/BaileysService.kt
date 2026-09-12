@@ -26,7 +26,10 @@ data class BaileysEvent(
     val timestamp: Long = System.currentTimeMillis()
 )
 
-class BaileysService(private val database: AppDatabase) {
+class BaileysService(
+    private val database: AppDatabase,
+    private val supabaseSyncService: com.example.domain.supabase.SupabaseSyncService? = null
+) {
 
     private val scope = CoroutineScope(Dispatchers.IO)
     private val _eventsFlow = MutableSharedFlow<BaileysEvent>(replay = 10)
@@ -199,7 +202,7 @@ class BaileysService(private val database: AppDatabase) {
         val mcpTools = mcpDao.getEnabledTools()
 
         // 5. Retrieve dynamic product catalog (RAG) filtered by category if applicable
-        val products = if (matchedCategory != null) {
+        var products = if (matchedCategory != null) {
             val filtered = allProducts.filter { it.categoryId == matchedCategory.id }
             if (filtered.isNotEmpty()) filtered else allProducts
         } else {
@@ -213,20 +216,44 @@ class BaileysService(private val database: AppDatabase) {
             }
         }
 
-        // 6. Execute Local AI Edge Inference with category-specific persona and directives if matched
-        val effectiveAgent = if (matchedCategory != null && matchedCategory.aiAgentPrompt.isNotBlank()) {
-            selectedAgent.copy(
-                name = matchedCategory.aiAgentName.ifBlank { selectedAgent.name },
-                systemPrompt = """
-${matchedCategory.aiAgentPrompt}
+        // 5.5 DYNAMIC KNOWLEDGE BASE & SUPABASE RAG INJECTION
+        // Lorsqu'un client arrive depuis la vitrine web ou interroge un produit/service,
+        // interroger dynamiquement Supabase pour charger la fiche produit en direct (Titre, Description, Specs, Prix, Stock, FAQ)
+        var dynamicProductSnippet: String? = null
+        try {
+            if (supabaseSyncService != null) {
+                val dynamicKnowledgeList = supabaseSyncService.fetchDynamicProductKnowledge(query = messageText)
+                if (dynamicKnowledgeList.isNotEmpty()) {
+                    val primaryDynamic = dynamicKnowledgeList.first()
+                    dynamicProductSnippet = primaryDynamic.toSystemPromptSnippet()
 
-${selectedAgent.systemPrompt}
-                """.trimIndent(),
-                temperature = matchedCategory.aiAgentTemperature.toFloat()
-            )
-        } else {
-            selectedAgent
+                    // Injecter les fiches produits dynamiques en tête de liste pour l'inférence
+                    val dynamicEntities = dynamicKnowledgeList.map { it.toProductEntity() }
+                    products = dynamicEntities + products
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("BaileysService", "Erreur RAG dynamique Supabase: ${e.message}")
         }
+
+        // 6. Execute Local AI Edge Inference with category-specific persona and directives if matched
+        val baseSystemPrompt = buildString {
+            if (!dynamicProductSnippet.isNullOrBlank()) {
+                append(dynamicProductSnippet)
+                append("\n\n")
+            }
+            if (matchedCategory != null && matchedCategory.aiAgentPrompt.isNotBlank()) {
+                append(matchedCategory.aiAgentPrompt)
+                append("\n\n")
+            }
+            append(selectedAgent.systemPrompt)
+        }
+
+        val effectiveAgent = selectedAgent.copy(
+            name = if (matchedCategory != null && matchedCategory.aiAgentName.isNotBlank()) matchedCategory.aiAgentName else selectedAgent.name,
+            systemPrompt = baseSystemPrompt,
+            temperature = if (matchedCategory != null) matchedCategory.aiAgentTemperature.toFloat() else selectedAgent.temperature
+        )
 
         val inferenceResult = AiEdgeQuantizerEngine.runAgentInference(
             agent = effectiveAgent,

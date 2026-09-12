@@ -90,7 +90,9 @@ object EdgeNeuralReasoningEngine {
             matchedSnippets = matchedSnippets,
             executedTools = executedTools,
             temperature = temperature,
-            backend = backend
+            backend = backend,
+            products = products,
+            knowledgeSources = knowledgeSources
         )
 
         val elapsed = System.currentTimeMillis() - startTime
@@ -162,11 +164,12 @@ object EdgeNeuralReasoningEngine {
             (q.contains("prix") || q.contains("tarif") || q.contains("cout") || q.contains("forfait") || q.contains("pack") || q.contains("combien") || q.contains("abonnement"))) {
             val matchedProduct = products.firstOrNull { prod ->
                 prod.title.lowercase(Locale.getDefault()).split(" ").any { kw -> kw.length >= 3 && q.contains(kw) }
-            }
+            } ?: products.firstOrNull()
             if (matchedProduct != null) {
-                executed.add("get_product_price(item=\"${matchedProduct.title}\") -> ${matchedProduct.sellingPrice} ${matchedProduct.currency} (Disponibilité: ${matchedProduct.stockQuantity} en stock)")
+                val price = matchedProduct.sellingPrice ?: matchedProduct.purchasePrice ?: 0.0
+                executed.add("get_product_price(item=\"${matchedProduct.title}\") -> ${price.toInt()} ${matchedProduct.currency} (Disponibilité: ${matchedProduct.stockQuantity} en stock)")
             } else {
-                executed.add("get_product_price(item=\"Pack Pro\") -> 79€ / mois (Multi-instances WhatsApp + RAG Supabase + Moteur LiteRT INT4)")
+                executed.add("get_product_price(item=\"Catalogue\") -> Veuillez préciser le produit souhaité pour obtenir son tarif exact.")
             }
         }
 
@@ -193,7 +196,9 @@ object EdgeNeuralReasoningEngine {
         matchedSnippets: List<String>,
         executedTools: List<String>,
         temperature: Float,
-        backend: String
+        backend: String,
+        products: List<com.example.data.local.entity.ProductEntity> = emptyList(),
+        knowledgeSources: List<KnowledgeSourceEntity> = emptyList()
     ): String {
         val q = prompt.trim()
         val qLower = q.lowercase(Locale.getDefault())
@@ -204,9 +209,9 @@ object EdgeNeuralReasoningEngine {
                 append("📦 **Suivi de votre commande en direct**\n\n")
                 append("J'ai vérifié notre système logistique : votre colis est actuellement pris en charge par notre transporteur partenaire.\n")
                 append("• **Statut** : En cours d'acheminement\n")
-                append("• **Livraison estimée** : Demain avant 18h00\n")
-                append("• **Référence** : CMD-9201\n\n")
-                append("Un lien de géolocalisation par SMS vous sera envoyé dès que le livreur sera en route. Avez-vous besoin d'autres informations ?")
+                append("• **Livraison estimée** : Sous 24h à 48h ouvrées\n")
+                append("• **Modalité** : Paiement à la livraison après inspection de votre colis.\n\n")
+                append("Un lien de géolocalisation ou un SMS vous sera envoyé par le livreur avant son passage. Avez-vous besoin d'autres précisions ?")
             }
         }
 
@@ -220,19 +225,33 @@ object EdgeNeuralReasoningEngine {
 
         if (executedTools.any { it.startsWith("book_appointment") }) {
             return buildString {
-                append("📅 **Planification de votre rendez-vous**\n\n")
-                append("J'ai pré-réservé un créneau pour vous demain à 15h00 avec un de nos spécialistes.\n\n")
-                append("Pour finaliser la confirmation, pourriez-vous simplement me préciser votre nom et l'objet principal de l'échange ?")
+                append("📅 **Planification de votre créneau**\n\n")
+                append("J'ai pré-réservé un créneau pour vous demain avec un de nos spécialistes.\n\n")
+                append("Pour finaliser la confirmation, pourriez-vous simplement me préciser votre nom et votre ville ?")
             }
         }
 
         if (executedTools.any { it.startsWith("get_product_price") }) {
             return buildString {
-                append("💼 **Détails de nos tarifs et formules :**\n\n")
-                append("• **Pack Starter (29 € / mois)** : 1 instance WhatsApp, réponses automatiques illimitées, support standard.\n")
-                append("• **Pack Pro (79 € / mois)** : Multi-instances (jusqu'à 5 numéros), modèles Edge accélérés, RAG et outils MCP inclus.\n")
-                append("• **Pack Entreprise (Sur devis)** : Déploiement sur mesure, volume illimité et support dédié.\n\n")
-                append("Souhaitez-vous qu'on programme un échange rapide pour faire le point sur vos besoins ?")
+                append("💼 **Tarif & Disponibilité en direct :**\n\n")
+                if (products.isNotEmpty()) {
+                    val targetProd = products.firstOrNull { prod ->
+                        prod.title.lowercase(Locale.getDefault()).split(" ").any { kw -> kw.length >= 3 && qLower.contains(kw) }
+                    } ?: products.first()
+                    val price = targetProd.sellingPrice ?: targetProd.purchasePrice ?: 0.0
+                    val stockMsg = if (targetProd.stockQuantity > 0) "${targetProd.stockQuantity} unités en stock" else "Sur commande / réapprovisionnement"
+                    append("• **${targetProd.title}** : **${price.toInt()} ${targetProd.currency}**\n")
+                    append("• **Disponibilité** : $stockMsg\n")
+                    if (!targetProd.description.isNullOrBlank()) {
+                        append("• **Description** : ${targetProd.description}\n")
+                    }
+                    append("\n🚚 **Livraison rapide** partout au Maroc en 24-48h.\n")
+                    append("💵 **Paiement sécurisé à la livraison** (Cash on Delivery).\n\n")
+                    append("Souhaitez-vous commander cet article dès maintenant ?")
+                } else {
+                    append("Nos tarifs varient selon les articles et les quantités commandées.\n")
+                    append("Indiquez-moi le nom ou la référence de l'article qui vous intéresse afin que je vous confirme son prix exact !")
+                }
             }
         }
 
@@ -346,19 +365,23 @@ object EdgeNeuralReasoningEngine {
             return buildString {
                 append("$greetingIntro Je vous réponds avec grand plaisir :\n\n")
                 append("🤖 **Qui je suis :**\n")
-                append("Je suis votre assistant commercial virtuel sur WhatsApp, alimenté par le modèle local **$modelName**. Je suis là pour vous accompagner 24h/24, répondre à toutes vos questions et vous guider vers les solutions adaptées à vos besoins.\n\n")
-                append("💼 **Ce que nous vous proposons à la vente :**\n")
+                append("Je suis votre conseiller commercial sur WhatsApp, alimenté par le modèle local **$modelName**. Je suis là pour vous accompagner, répondre à toutes vos questions et prendre vos commandes.\n\n")
+                append("💼 **Nos articles et offres disponibles :**\n")
                 if (matchedSnippets.isNotEmpty()) {
                     val content = matchedSnippets.joinToString("\n• ") { it.replace(Regex("\\[.*?\\]"), "").trim() }
                     append("• $content\n\n")
+                } else if (products.isNotEmpty()) {
+                    products.take(5).forEach { prod ->
+                        val price = prod.sellingPrice ?: prod.purchasePrice ?: 0.0
+                        val stockStatus = if (prod.stockQuantity > 0) "En stock (${prod.stockQuantity} disp.)" else "Sur commande"
+                        append("• **${prod.title}** : ${price.toInt()} ${prod.currency} ($stockStatus)\n")
+                    }
+                    append("\n")
                 } else {
-                    append("Nous proposons des solutions complètes de messagerie et d'automatisation d'entreprise :\n")
-                    append("• **Pack Starter (29 € / mois)** : 1 instance WhatsApp dédiée, réponses automatiques intelligentes 24h/24, configuration rapide.\n")
-                    append("• **Pack Pro (79 € / mois)** : Notre offre la plus demandée ! Multi-instances (jusqu'à 5 numéros), modèles locaux accélérés sur NPU, base de connaissances RAG d'entreprise et outils MCP intégrés.\n")
-                    append("• **Pack Entreprise (Sur mesure)** : Déploiement personnalisé, volume illimité, synchronisation CRM avancée et assistance VIP dédiée.\n\n")
+                    append("Nous vous proposons notre sélection d'articles de boutique (Mode, High-Tech, Maison, Beauté, etc.) avec livraison rapide partout au Maroc.\n\n")
                 }
-                append("Nous concevons également des modules d'automatisation sur mesure selon votre activité.$nightNotice\n\n")
-                append("Avez-vous un besoin ou un projet précis en tête dont vous souhaiteriez discuter ?")
+                append("📦 *Livraison partout au Maroc* avec paiement à la livraison (Cash on Delivery).$nightNotice\n\n")
+                append("Avez-vous un article précis ou une catégorie que vous aimeriez consulter ?")
             }
         }
 
@@ -399,35 +422,46 @@ object EdgeNeuralReasoningEngine {
         // 6. CASE: Sales & Offers Catalog query ("Que proposez-vous à vendre ?", "catalogue", "offres", "produits")
         if (hasSalesIntent) {
             return buildString {
-                append("$greetingIntro Voici un aperçu de nos solutions et prestations disponibles :\n\n")
+                append("$greetingIntro Voici un aperçu de nos articles et sélections disponibles :\n\n")
                 if (matchedSnippets.isNotEmpty()) {
                     val content = matchedSnippets.joinToString("\n• ") { it.replace(Regex("\\[.*?\\]"), "").trim() }
                     append("• $content\n\n")
+                } else if (products.isNotEmpty()) {
+                    products.take(6).forEach { prod ->
+                        val price = prod.sellingPrice ?: prod.purchasePrice ?: 0.0
+                        val stockStatus = if (prod.stockQuantity > 0) "✅ En stock (${prod.stockQuantity} unités)" else "⏳ Réapprovisionnement"
+                        append("• **${prod.title}** : **${price.toInt()} ${prod.currency}** ($stockStatus)\n")
+                        if (!prod.description.isNullOrBlank()) {
+                            append("  _${prod.description.take(80)}..._\n")
+                        }
+                    }
+                    append("\n")
                 } else {
-                    append("• **Pack Starter (29 € / mois)** : Idéal pour démarrer avec 1 ligne WhatsApp, assistant IA réactif 24h/24 et intégration simple.\n")
-                    append("• **Pack Pro (79 € / mois)** : La formule recommandée ! 5 instances WhatsApp, modèles Edge INT4 optimisés NPU/GPU, base RAG d'entreprise et outils MCP connectés.\n")
-                    append("• **Pack Entreprise (Sur devis)** : Architecture sur mesure, multi-agents illimités, intégration CRM et modèles haute capacité.\n\n")
-                    append("Nous développons également des passerelles d'automatisation sur mesure selon vos flux métiers.$nightNotice\n\n")
+                    append("Bienvenue sur notre catalogue ! Nous disposons d'une large gamme d'articles de qualité livrés directement chez vous.\n\n")
                 }
-                append("Souhaitez-vous une démonstration ou des détails sur l'une de ces formules ?")
+                append("🚚 **Livraison rapide 24h-48h** | 💵 **Paiement à la livraison**$nightNotice\n\n")
+                append("Indiquez-moi l'article ou la référence qui vous plaît pour commander ou recevoir plus de détails !")
             }
         }
 
         // 7. CASE: Pricing, Quotes & Rates ("prix", "tarif", "combien ça coûte", "devis")
         if (hasPricingIntent) {
             return buildString {
-                append("Bonjour ! 👋 Voici nos offres et tarifs transparents :\n\n")
+                append("Bonjour ! 👋 Voici les tarifs de nos articles phares actuellement disponibles :\n\n")
                 if (matchedSnippets.isNotEmpty()) {
                     val content = matchedSnippets.joinToString("\n• ") { it.replace(Regex("\\[.*?\\]"), "").trim() }
                     append("• $content\n\n")
+                } else if (products.isNotEmpty()) {
+                    products.take(6).forEach { prod ->
+                        val price = prod.sellingPrice ?: prod.purchasePrice ?: 0.0
+                        append("• **${prod.title}** : **${price.toInt()} ${prod.currency}**\n")
+                    }
+                    append("\n")
                 } else {
-                    append("💼 **Nos formules d'abonnement :**\n")
-                    append("• **Starter** : **29 € / mois** (1 instance WhatsApp, 500 échanges assistés/jour)\n")
-                    append("• **Pro** : **79 € / mois** (5 instances WhatsApp, base RAG connectée, requêtes illimitées)\n")
-                    append("• **Entreprise** : **Sur devis personnalisé** (déploiement dédié et accompagnement premium)\n\n")
-                    append("Toutes nos offres sont sans engagement de longue durée et incluent l'exécution sécurisée sur votre matériel.$nightNotice\n\n")
+                    append("Nos tarifs sont indiqués en dirhams (MAD) avec paiement sécurisé à la livraison.\n\n")
                 }
-                append("Aimeriez-vous que nous vous préparions une proposition personnalisée pour votre activité ?")
+                append("Tous nos prix sont TTC avec possibilité de vérifier votre commande auprès du livreur avant règlement.$nightNotice\n\n")
+                append("Pourriez-vous me préciser l'article qui vous intéresse pour vous communiquer son offre détaillée ?")
             }
         }
 

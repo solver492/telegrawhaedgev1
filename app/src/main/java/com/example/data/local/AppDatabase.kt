@@ -177,12 +177,13 @@ Si le client pose une question hors champ, propose un transfert vers un humain a
 
             val salesAgent = AgentEntity(
                 id = "agent-sales-02",
-                name = "Agent Ventes & Devis",
+                name = "Agent Ventes & Boutique",
                 role = "Commercial",
-                systemPrompt = """Tu es un commercial dynamique et persuasif sur WhatsApp.
-Tu présentes nos offres (Pack Starter 29€/m, Pack Pro 79€/m, Pack Enterprise sur mesure).
-Identifie les besoins du prospect, calcule ou donne les tarifs exacts selon la base de connaissances.
-Invite poliment le prospect à réserver un appel ou finaliser sa commande.""".trimIndent(),
+                systemPrompt = """Tu es un conseiller commercial dynamique et professionnel pour notre boutique en ligne sur WhatsApp.
+Tu renseignes les clients sur les articles du catalogue, confirmes les disponibilités et les prix en direct depuis la base de données.
+Tu présentes les fiches techniques, les caractéristiques et orientes les acheteurs avec courtoisie.
+Rappelle que la livraison est assurée sous 24h-48h partout au Maroc avec paiement sécurisé à la réception du colis (Cash on Delivery).
+Invite chaleureusement le client à confirmer sa commande en fournissant son nom complet, son numéro et sa ville.""".trimIndent(),
                 modelId = "llama-3.2-1b-int4",
                 isLocal = true,
                 isActive = true,
@@ -234,7 +235,7 @@ Rassure le client, note sa demande et propose de réserver un créneau ou de lai
                     type = "SUPABASE",
                     title = "Supabase DB - Clients & Commandes",
                     targetUrlOrConfig = "https://xyzcompany.supabase.co/rest/v1/clients",
-                    contentData = "Table clients(id, nom, email, statut_commande, abonnement). Commandes récentes : #CMD-8491 (Livrée), #CMD-9201 (En transit, livraison estimée demain).",
+                    contentData = "Table clients(id, nom, email, statut_commande, abonnement). Commandes récentes : #CMD-8491 (Livrée), #CMD-9201 (En transit, livraison estimée sous 24h-48h).",
                     supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
                     supabaseTable = "clients_and_orders",
                     isEnabled = true,
@@ -247,9 +248,9 @@ Rassure le client, note sa demande et propose de réserver un créneau ou de lai
                     id = "know-web-02",
                     agentId = "agent-sales-02",
                     type = "WEB_URL",
-                    title = "Page Web Tarifs & Services",
-                    targetUrlOrConfig = "https://example.com/pricing",
-                    contentData = "Offres 2025: Pack Starter à 29€/mois (1 instance WA, 500 réponses IA/jour), Pack Pro à 79€/mois (5 instances WA, modèles Edge Quantizer illimités, RAG Supabase inclus), Entreprise à 249€/mois (Support dédié, NPU Edge optimisé).",
+                    title = "Conditions de Vente & Livraison",
+                    targetUrlOrConfig = "https://example.com/conditions-livraison",
+                    contentData = "Catalogue e-commerce: Expédition sous 24h à 48h ouvrées partout au Maroc. Paiement en espèces à la livraison (Cash on Delivery). Contrôle du colis possible avant paiement. Échange ou retour possible sous 7 jours ouvrés.",
                     isEnabled = true,
                     chunkCount = 12
                 )
