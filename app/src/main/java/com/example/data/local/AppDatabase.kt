@@ -15,6 +15,7 @@ import com.example.data.local.dao.WebhookDao
 import com.example.data.local.dao.WhatsAppDao
 import com.example.data.local.dao.WhatsAppMessageDao
 import com.example.data.local.entity.AffiliateEntity
+import com.example.data.local.entity.ActiveConversationSessionEntity
 import com.example.data.local.entity.AgentEntity
 import com.example.data.local.entity.AppSettingsEntity
 import com.example.data.local.entity.CategoryEntity
@@ -61,9 +62,10 @@ import java.util.UUID
         AffiliateEntity::class,
         OrderEntity::class,
         AppSettingsEntity::class,
-        ConversationAgentOverrideEntity::class
+        ConversationAgentOverrideEntity::class,
+        ActiveConversationSessionEntity::class
     ],
-    version = 11,
+    version = 12,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -101,13 +103,32 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_11_12 = object : androidx.room.migration.Migration(11, 12) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS active_conversation_sessions (
+                        remoteJid TEXT PRIMARY KEY NOT NULL,
+                        agentId TEXT NOT NULL,
+                        categoryId TEXT,
+                        orderId TEXT,
+                        lastActivityTimestamp INTEGER NOT NULL,
+                        isCompleted INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+                database.execSQL("ALTER TABLE ecommerce_orders ADD COLUMN customerCity TEXT DEFAULT NULL")
+                database.execSQL("ALTER TABLE ecommerce_orders ADD COLUMN conversationTranscript TEXT DEFAULT NULL")
+                database.execSQL("ALTER TABLE ecommerce_orders ADD COLUMN isCoordinatesCaptured INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE ecommerce_orders ADD COLUMN remoteJid TEXT DEFAULT NULL")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "ai_edge_whatsapp_db"
-                ).addMigrations(MIGRATION_9_10, MIGRATION_10_11)
+                ).addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
                 .fallbackToDestructiveMigration()
                 .addCallback(object : Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {

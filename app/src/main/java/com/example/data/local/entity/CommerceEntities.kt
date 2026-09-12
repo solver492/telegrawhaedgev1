@@ -155,5 +155,9 @@ data class OrderEntity(
     val affiliateCode: String? = null,
     val customerCallNotes: String = "",
     val callAttemptsCount: Int = 0,
+    val customerCity: String? = null,
+    val conversationTranscript: String? = null,
+    val isCoordinatesCaptured: Boolean = false,
+    val remoteJid: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )

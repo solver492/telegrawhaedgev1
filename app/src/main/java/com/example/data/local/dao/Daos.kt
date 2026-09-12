@@ -89,6 +89,19 @@ interface AgentDao {
 
     @Query("DELETE FROM conversation_agent_overrides WHERE remoteJid = :remoteJid")
     suspend fun deleteConversationOverride(remoteJid: String)
+
+    // Active Conversation Sessions (Continuity)
+    @Query("SELECT * FROM active_conversation_sessions WHERE remoteJid = :remoteJid LIMIT 1")
+    suspend fun getActiveConversationSession(remoteJid: String): com.example.data.local.entity.ActiveConversationSessionEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrUpdateActiveSession(session: com.example.data.local.entity.ActiveConversationSessionEntity)
+
+    @Query("UPDATE active_conversation_sessions SET isCompleted = 1 WHERE remoteJid = :remoteJid")
+    suspend fun markActiveSessionCompleted(remoteJid: String)
+
+    @Query("DELETE FROM active_conversation_sessions WHERE remoteJid = :remoteJid")
+    suspend fun deleteActiveSession(remoteJid: String)
 }
 
 @Dao

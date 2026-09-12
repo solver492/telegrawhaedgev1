@@ -132,6 +132,9 @@ class BaileysService(
             return null
         }
 
+        // 1.5 Retrieve active conversation session if any
+        val existingSession = agentDao.getActiveConversationSession(senderJid)
+
         // 2. Resolve target AI Agent via smart routing engine (Override, Category-first, then Instance, Keywords, Schedule, Fallback)
         val activeAgents = agentDao.getActiveAgents()
         val allCategories = database.commerceDao().getAllCategoriesList()
@@ -153,7 +156,8 @@ class BaileysService(
                     categories = allCategories,
                     products = allProducts,
                     instanceId = instanceId,
-                    messageText = messageText
+                    messageText = messageText,
+                    activeSession = existingSession
                 )
                 selectedAgent = routingDecision.agent
                 routingReason = routingDecision.reason
@@ -165,7 +169,8 @@ class BaileysService(
                 categories = allCategories,
                 products = allProducts,
                 instanceId = instanceId,
-                messageText = messageText
+                messageText = messageText,
+                activeSession = existingSession
             )
             selectedAgent = routingDecision.agent
             routingReason = routingDecision.reason
@@ -296,22 +301,33 @@ class BaileysService(
             customerPhone = customerPhoneNum
         )
 
-        // 6.5 Enregistrement automatique de la pré-commande e-commerce si un message de commande arrive
-        // Ne JAMAIS créer de commande sur une simple demande de suivi de colis ou statut
+        // 6.5 GESTION DES COMMANDES & CONTINUITÉ DE SESSION WHATSAPP
         try {
             val isExplicitTracking = EdgeNeuralReasoningEngine.isExplicitOrderTrackingQuery(messageText)
-            val isStoreOrder = !isExplicitTracking && EdgeNeuralReasoningEngine.isStorefrontOrderOrPurchase(messageText)
+            val isCoords = com.example.domain.commerce.OrderCustomerInfoParser.isDeliveryCoordinatesMessage(messageText)
+            val isAck = com.example.domain.commerce.OrderCustomerInfoParser.isFollowUpAcknowledgment(messageText)
+            val isStoreOrder = !isExplicitTracking && !isCoords && !isAck && EdgeNeuralReasoningEngine.isStorefrontOrderOrPurchase(messageText)
+
+            var activeOrderId = existingSession?.orderId
 
             if (isStoreOrder) {
+                // Création ou réactualisation de la pré-commande
+                val existingPending = database.commerceDao().getLatestOrderForRemoteJid(senderJid)
+                    ?.takeIf { it.status == "PENDING_CONFIRMATION" && !it.isCoordinatesCaptured }
+
+                val orderId = existingPending?.id ?: "ord-${UUID.randomUUID().toString().take(8)}"
+                val orderNum = existingPending?.orderNumber ?: "#CMD-${(1000..9999).random()}"
+
                 val targetProduct = products.firstOrNull() ?: allProducts.firstOrNull { prod ->
                     prod.title.length >= 3 && messageText.lowercase(Locale.getDefault()).contains(prod.title.lowercase(Locale.getDefault()))
                 }
                 val orderProdName = targetProduct?.title ?: (Regex("""(?i)produit\s*:\s*([^\n\r,]+)""").find(messageText)?.groupValues?.get(1)?.trim() ?: "Produit Vitrine")
                 val orderPrice = targetProduct?.sellingPrice ?: (Regex("""(?i)prix\s*:\s*([0-9.]+)""").find(messageText)?.groupValues?.get(1)?.toDoubleOrNull() ?: 110.0)
-                val orderNum = "#CMD-${(1000..9999).random()}"
+
+                val newTranscript = "Client: $messageText\nAgent: ${inferenceResult.replyText}"
 
                 val newOrder = com.example.data.local.entity.OrderEntity(
-                    id = "ord-${UUID.randomUUID().toString().take(8)}",
+                    id = orderId,
                     orderNumber = orderNum,
                     customerName = if (senderJid.contains("@")) "Client WhatsApp ($customerPhoneNum)" else "Client Vitrine",
                     customerPhone = customerPhoneNum,
@@ -323,13 +339,89 @@ class BaileysService(
                     totalAmount = orderPrice,
                     currency = targetProduct?.currency ?: "MAD",
                     status = "PENDING_CONFIRMATION",
-                    customerCallNotes = "Pré-commande issue de WhatsApp. Rappeler le client pour confirmer nom, ville et adresse de livraison.",
-                    createdAt = System.currentTimeMillis()
+                    customerCallNotes = "Pré-commande issue de WhatsApp. En attente des coordonnées de livraison (nom, ville, adresse, tél).",
+                    createdAt = existingPending?.createdAt ?: System.currentTimeMillis(),
+                    customerCity = null,
+                    conversationTranscript = newTranscript,
+                    isCoordinatesCaptured = false,
+                    remoteJid = senderJid
                 )
                 database.commerceDao().insertOrder(newOrder)
+                activeOrderId = orderId
+
+                // Enregistrer la session active
+                agentDao.insertOrUpdateActiveSession(
+                    com.example.data.local.entity.ActiveConversationSessionEntity(
+                        remoteJid = senderJid,
+                        agentId = selectedAgent.id,
+                        categoryId = matchedCategory?.id,
+                        orderId = orderId,
+                        lastActivityTimestamp = System.currentTimeMillis(),
+                        isCompleted = false
+                    )
+                )
+            } else if (isCoords) {
+                // Extraction et enregistrement des coordonnées réelles (Nom, Ville, Adresse, Téléphone)
+                val coords = com.example.domain.commerce.OrderCustomerInfoParser.extractCoordinates(messageText)
+
+                val pendingOrder = (activeOrderId?.let { database.commerceDao().findOrderByNumber(it) }
+                    ?: database.commerceDao().getLatestOrderForRemoteJid(senderJid)?.takeIf { it.status == "PENDING_CONFIRMATION" }
+                    ?: database.commerceDao().getLatestOrderForPhone(customerPhoneNum)?.takeIf { it.status == "PENDING_CONFIRMATION" })
+
+                if (pendingOrder != null && coords != null) {
+                    val prevTranscript = pendingOrder.conversationTranscript ?: ""
+                    val updatedTranscript = if (prevTranscript.isNotBlank()) {
+                        "$prevTranscript\nClient: $messageText\nAgent: ${inferenceResult.replyText}"
+                    } else {
+                        "Client: $messageText\nAgent: ${inferenceResult.replyText}"
+                    }
+
+                    val updatedOrder = pendingOrder.copy(
+                        customerName = coords.name,
+                        customerCity = coords.city,
+                        customerPhone = coords.phone.ifBlank { pendingOrder.customerPhone },
+                        deliveryAddress = "${coords.address}, ${coords.city}",
+                        customerCallNotes = "Coordonnées complètes reçues : ${coords.name} | Ville : ${coords.city} | Adresse : ${coords.address} | Tél : ${coords.phone}. Rappel de confirmation à effectuer.",
+                        isCoordinatesCaptured = true,
+                        conversationTranscript = updatedTranscript
+                    )
+                    database.commerceDao().insertOrder(updatedOrder)
+
+                    // Marquer la session de conversation comme terminée
+                    agentDao.insertOrUpdateActiveSession(
+                        com.example.data.local.entity.ActiveConversationSessionEntity(
+                            remoteJid = senderJid,
+                            agentId = selectedAgent.id,
+                            categoryId = matchedCategory?.id ?: existingSession?.categoryId,
+                            orderId = pendingOrder.id,
+                            lastActivityTimestamp = System.currentTimeMillis(),
+                            isCompleted = true
+                        )
+                    )
+                }
+            } else if (isAck) {
+                // Simple remerciement ou accusé de réception : mettre à jour le transcript sans créer de nouvelle commande
+                val latestOrder = database.commerceDao().getLatestOrderForRemoteJid(senderJid)
+                if (latestOrder != null) {
+                    val prevTranscript = latestOrder.conversationTranscript ?: ""
+                    val updatedTranscript = "$prevTranscript\nClient: $messageText\nAgent: ${inferenceResult.replyText}"
+                    database.commerceDao().insertOrder(latestOrder.copy(conversationTranscript = updatedTranscript))
+                }
+            } else if (existingSession != null && !existingSession.isCompleted) {
+                // Conversation en cours : mettre à jour le timestamp d'activité et le transcript
+                val orderToUpdate = activeOrderId?.let { database.commerceDao().findOrderByNumber(it) }
+                    ?: database.commerceDao().getLatestOrderForRemoteJid(senderJid)
+                if (orderToUpdate != null) {
+                    val prevTranscript = orderToUpdate.conversationTranscript ?: ""
+                    val updatedTranscript = "$prevTranscript\nClient: $messageText\nAgent: ${inferenceResult.replyText}"
+                    database.commerceDao().insertOrder(orderToUpdate.copy(conversationTranscript = updatedTranscript))
+                }
+                agentDao.insertOrUpdateActiveSession(
+                    existingSession.copy(lastActivityTimestamp = System.currentTimeMillis())
+                )
             }
         } catch (e: Exception) {
-            android.util.Log.w("BaileysService", "Erreur création pré-commande: ${e.message}")
+            android.util.Log.w("BaileysService", "Erreur gestion commande et session: ${e.message}")
         }
 
         // 6. Record agent response
@@ -384,9 +476,29 @@ class BaileysService(
         categories: List<CategoryEntity>,
         products: List<ProductEntity>,
         instanceId: String,
-        messageText: String
+        messageText: String,
+        activeSession: com.example.data.local.entity.ActiveConversationSessionEntity? = null
     ): RoutingDecision {
         val textLower = messageText.lowercase(Locale.getDefault())
+
+        // -1. ACTIVE CONVERSATION SESSION CONTINUITY (Section 1, point 2 & Section 5)
+        // If an active session is ongoing for this thread and client hasn't explicitly changed topic
+        if (activeSession != null && activeSession.isSessionActive()) {
+            val sessionAgent = agents.firstOrNull { it.id == activeSession.agentId && it.isActive }
+                ?: agents.firstOrNull { it.id == activeSession.agentId }
+
+            if (sessionAgent != null) {
+                val isTopicChange = isClearTopicChange(messageText, categories, products, activeSession.categoryId)
+                if (!isTopicChange) {
+                    val sessionCategory = categories.firstOrNull { it.id == activeSession.categoryId }
+                    return RoutingDecision(
+                        agent = sessionAgent,
+                        reason = "Maintien de l'agent de session (${sessionAgent.name}) pour la conversation en cours",
+                        matchedCategory = sessionCategory
+                    )
+                }
+            }
+        }
 
         // 0. TOP PRIORITY: Category-based Smart Routing
         // Check if message corresponds to a specific Product or Category
@@ -514,6 +626,39 @@ class BaileysService(
         } catch (e: Exception) {
             true
         }
+    }
+
+    private fun isClearTopicChange(
+        messageText: String,
+        categories: List<CategoryEntity>,
+        products: List<ProductEntity>,
+        currentCategoryId: String?
+    ): Boolean {
+        val textLower = messageText.lowercase(Locale.getDefault())
+
+        // Delivery coordinates, acknowledgments, or very short messages are NEVER a topic change
+        if (com.example.domain.commerce.OrderCustomerInfoParser.isDeliveryCoordinatesMessage(messageText) ||
+            com.example.domain.commerce.OrderCustomerInfoParser.isFollowUpAcknowledgment(messageText) ||
+            textLower.length < 8
+        ) {
+            return false
+        }
+
+        // Explicit mention of another category
+        val otherCategory = categories.firstOrNull { cat ->
+            cat.id != currentCategoryId && (
+                textLower.contains(cat.name.lowercase(Locale.getDefault())) ||
+                textLower.contains(cat.slug.lowercase(Locale.getDefault()))
+            )
+        }
+        if (otherCategory != null) return true
+
+        // Explicit mention of a product belonging to another category
+        val otherProduct = products.firstOrNull { prod ->
+            prod.categoryId != null && prod.categoryId != currentCategoryId &&
+            prod.title.length >= 4 && textLower.contains(prod.title.lowercase(Locale.getDefault()))
+        }
+        return otherProduct != null
     }
 
     private fun generatePairingCode(): String {

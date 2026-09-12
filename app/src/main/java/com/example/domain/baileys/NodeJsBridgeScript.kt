@@ -355,7 +355,19 @@ function startHttpServer(portToTry) {
             res.end(JSON.stringify({ success: true, messageId: sent?.key?.id }));
           } else if (captionText) {
             console.log(`📤 [BAILEYS ENVOI TEXTE] Vers : ${'$'}{targetJid} | Texte : "${'$'}{captionText}"`);
+            try {
+              await sock.sendPresenceUpdate('composing', targetJid);
+              const textLen = captionText.length;
+              const typingDelay = Math.min(2000, Math.max(500, Math.floor(textLen * 12)));
+              await new Promise(resolve => setTimeout(resolve, typingDelay));
+            } catch (e) {}
+
             const sent = await sock.sendMessage(targetJid, { text: captionText });
+
+            try {
+              await sock.sendPresenceUpdate('paused', targetJid);
+            } catch (e) {}
+
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true, messageId: sent?.key?.id }));
           } else {
@@ -607,7 +619,23 @@ async function startBaileys() {
 
       if (response && response.replyText && response.replyText.trim().length > 0 && !response.skipped && !response.humanMode) {
         console.log(`🤖 [RÉPONSE IA - ${'$'}{response.agentName || 'Agent'} | ${'$'}{response.latencyMs || 0}ms] : "${'$'}{response.replyText}"`);
+
+        // Indicateur de frappe (typing indicator Baileys)
+        try {
+          await sock.sendPresenceUpdate('composing', remoteJid);
+        } catch (presErr) {}
+
+        // Délai de frappe proportionnel et crédible (entre 800ms et 2500ms selon longueur)
+        const textLen = response.replyText.length;
+        const typingDelay = Math.min(2500, Math.max(800, Math.floor(textLen * 15)));
+        await new Promise(resolve => setTimeout(resolve, typingDelay));
+
         await sock.sendMessage(remoteJid, { text: response.replyText }, { quoted: msg });
+
+        try {
+          await sock.sendPresenceUpdate('paused', remoteJid);
+        } catch (presErr) {}
+
         console.log(`🚀 [WHATSAPP] Réponse envoyée avec succès sur WhatsApp !`);
       } else {
         console.log(`👤 [MODE REPRISE HUMAINE] Aucun message IA envoyé à ${'$'}{remoteJid} (IA désactivée ou en attente)`);

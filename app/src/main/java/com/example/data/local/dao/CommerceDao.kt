@@ -156,6 +156,12 @@ interface CommerceDao {
     @Query("SELECT * FROM ecommerce_orders WHERE orderNumber = :orderNumber OR id = :orderNumber LIMIT 1")
     suspend fun findOrderByNumber(orderNumber: String): OrderEntity?
 
+    @Query("SELECT * FROM ecommerce_orders WHERE remoteJid = :remoteJid ORDER BY createdAt DESC LIMIT 1")
+    suspend fun getLatestOrderForRemoteJid(remoteJid: String): OrderEntity?
+
+    @Query("SELECT * FROM ecommerce_orders WHERE customerPhone = :phone ORDER BY createdAt DESC LIMIT 1")
+    suspend fun getLatestOrderForPhone(phone: String): OrderEntity?
+
     @Query("SELECT * FROM ecommerce_orders WHERE status = 'PENDING_CONFIRMATION' ORDER BY createdAt DESC")
     fun getOrdersToCall(): Flow<List<OrderEntity>>
 

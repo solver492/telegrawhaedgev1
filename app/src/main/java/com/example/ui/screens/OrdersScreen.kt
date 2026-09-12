@@ -89,6 +89,7 @@ fun OrdersScreen(
     var selectedSubTab by remember { mutableIntStateOf(0) } // 0 = Clients à appeler (prioritaire), 1 = Toutes les commandes
     var showAddDialog by remember { mutableStateOf(false) }
     var orderToValidateNotes by remember { mutableStateOf<OrderEntity?>(null) }
+    var selectedTranscriptOrder by remember { mutableStateOf<OrderEntity?>(null) }
 
     val displayedOrders = if (selectedSubTab == 0) ordersToCall else allOrders
 
@@ -225,45 +226,72 @@ fun OrdersScreen(
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 15.sp
                                     )
+                                    if (!order.customerCity.isNullOrBlank()) {
+                                        Text(
+                                            "Ville : ${order.customerCity}",
+                                            color = ElegantPurpleAccent,
+                                            fontWeight = FontWeight.Medium,
+                                            fontSize = 11.sp
+                                        )
+                                    }
                                 }
 
-                                // Statut Badge
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = when (order.status) {
-                                        "PENDING_CONFIRMATION" -> Color(0xFFFFB300).copy(alpha = 0.15f)
-                                        "CONFIRMED_CALL" -> WhatsAppGreen.copy(alpha = 0.15f)
-                                        "IN_DELIVERY" -> Color(0xFF2AABEE).copy(alpha = 0.15f)
-                                        else -> ElegantDarkSurfaceVariant
-                                    },
-                                    border = BorderStroke(
-                                        1.dp,
-                                        when (order.status) {
-                                            "PENDING_CONFIRMATION" -> Color(0xFFFFB300).copy(alpha = 0.4f)
-                                            "CONFIRMED_CALL" -> WhatsAppGreen.copy(alpha = 0.4f)
-                                            "IN_DELIVERY" -> Color(0xFF2AABEE).copy(alpha = 0.4f)
-                                            else -> ElegantDarkBorder
-                                        }
-                                    )
-                                ) {
-                                    Text(
-                                        when (order.status) {
-                                            "PENDING_CONFIRMATION" -> "● À Confirmer"
-                                            "CONFIRMED_CALL" -> "● Confirmé"
-                                            "IN_DELIVERY" -> "● En Livraison"
-                                            "DELIVERED" -> "● Livré"
-                                            else -> order.status
-                                        },
+                                Column(horizontalAlignment = Alignment.End) {
+                                    // Statut Badge
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
                                         color = when (order.status) {
-                                            "PENDING_CONFIRMATION" -> Color(0xFFFFB300)
-                                            "CONFIRMED_CALL" -> WhatsAppGreen
-                                            "IN_DELIVERY" -> Color(0xFF2AABEE)
-                                            else -> ElegantTextSecondary
+                                            "PENDING_CONFIRMATION" -> Color(0xFFFFB300).copy(alpha = 0.15f)
+                                            "CONFIRMED_CALL" -> WhatsAppGreen.copy(alpha = 0.15f)
+                                            "IN_DELIVERY" -> Color(0xFF2AABEE).copy(alpha = 0.15f)
+                                            else -> ElegantDarkSurfaceVariant
                                         },
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                    )
+                                        border = BorderStroke(
+                                            1.dp,
+                                            when (order.status) {
+                                                "PENDING_CONFIRMATION" -> Color(0xFFFFB300).copy(alpha = 0.4f)
+                                                "CONFIRMED_CALL" -> WhatsAppGreen.copy(alpha = 0.4f)
+                                                "IN_DELIVERY" -> Color(0xFF2AABEE).copy(alpha = 0.4f)
+                                                else -> ElegantDarkBorder
+                                            }
+                                        )
+                                    ) {
+                                        Text(
+                                            when (order.status) {
+                                                "PENDING_CONFIRMATION" -> "● À Confirmer"
+                                                "CONFIRMED_CALL" -> "● Confirmé"
+                                                "IN_DELIVERY" -> "● En Livraison"
+                                                "DELIVERED" -> "● Livré"
+                                                else -> order.status
+                                            },
+                                            color = when (order.status) {
+                                                "PENDING_CONFIRMATION" -> Color(0xFFFFB300)
+                                                "CONFIRMED_CALL" -> WhatsAppGreen
+                                                "IN_DELIVERY" -> Color(0xFF2AABEE)
+                                                else -> ElegantTextSecondary
+                                            },
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(4.dp))
+
+                                    // Badge Réception Coordonnées
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = if (order.isCoordinatesCaptured) WhatsAppGreen.copy(alpha = 0.15f) else Color(0xFFFFB300).copy(alpha = 0.12f),
+                                        border = BorderStroke(1.dp, if (order.isCoordinatesCaptured) WhatsAppGreen.copy(alpha = 0.4f) else Color(0xFFFFB300).copy(alpha = 0.3f))
+                                    ) {
+                                        Text(
+                                            if (order.isCoordinatesCaptured) "✓ Coordonnées reçues" else "⏳ En attente infos",
+                                            color = if (order.isCoordinatesCaptured) WhatsAppGreen else Color(0xFFFFB300),
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
                                 }
                             }
 
@@ -341,6 +369,46 @@ fun OrdersScreen(
                                         modifier = Modifier.padding(8.dp),
                                         lineHeight = 15.sp
                                     )
+                                }
+                            }
+
+                            if (!order.conversationTranscript.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = WhatsAppGreen.copy(alpha = 0.1f),
+                                    border = BorderStroke(1.dp, WhatsAppGreen.copy(alpha = 0.3f)),
+                                    modifier = Modifier.fillMaxWidth().clickable {
+                                        selectedTranscriptOrder = order
+                                    }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                Icons.AutoMirrored.Filled.Chat,
+                                                contentDescription = null,
+                                                tint = WhatsAppGreen,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                "Voir l'échange WhatsApp",
+                                                color = WhatsAppGreen,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                        Text(
+                                            "Consulter ➔",
+                                            color = WhatsAppGreen,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
                             }
 
@@ -629,6 +697,115 @@ fun OrdersScreen(
                 }
             },
             confirmButton = {}
+        )
+    }
+
+    if (selectedTranscriptOrder != null) {
+        val transcriptOrder = selectedTranscriptOrder!!
+        AlertDialog(
+            onDismissRequest = { selectedTranscriptOrder = null },
+            containerColor = ElegantDarkSurface,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Chat,
+                        contentDescription = null,
+                        tint = WhatsAppGreen,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            "Discussion WhatsApp",
+                            color = ElegantTextPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        Text(
+                            "${transcriptOrder.orderNumber} • ${transcriptOrder.customerName}",
+                            color = ElegantTextSecondary,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = ElegantDarkBg,
+                        border = BorderStroke(1.dp, ElegantDarkBorder),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text(
+                                "Client : ${transcriptOrder.customerName} (${transcriptOrder.customerPhone})",
+                                color = ElegantTextPrimary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (!transcriptOrder.customerCity.isNullOrBlank()) {
+                                Text(
+                                    "Ville : ${transcriptOrder.customerCity}",
+                                    color = ElegantPurpleAccent,
+                                    fontSize = 11.sp
+                                )
+                            }
+                            Text(
+                                "Adresse : ${transcriptOrder.deliveryAddress}",
+                                color = ElegantTextSecondary,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = ElegantDarkBg,
+                        border = BorderStroke(1.dp, ElegantDarkBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().padding(10.dp).height(240.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            val lines = transcriptOrder.conversationTranscript?.split("\n") ?: emptyList()
+                            items(lines.filter { it.isNotBlank() }) { line ->
+                                val isClient = line.startsWith("Client:", ignoreCase = true)
+                                val bubbleBg = if (isClient) ElegantDarkSurfaceVariant else WhatsAppGreen.copy(alpha = 0.15f)
+                                val bubbleBorder = if (isClient) ElegantDarkBorder else WhatsAppGreen.copy(alpha = 0.4f)
+                                val textColor = if (isClient) ElegantTextPrimary else Color(0xFFDCF8C6)
+
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = bubbleBg,
+                                    border = BorderStroke(1.dp, bubbleBorder),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = line,
+                                        color = textColor,
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.padding(8.dp),
+                                        lineHeight = 16.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { selectedTranscriptOrder = null },
+                    colors = ButtonDefaults.buttonColors(containerColor = ElegantPurpleAccent),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Fermer", color = Color.White)
+                }
+            }
         )
     }
 }

@@ -214,6 +214,14 @@ object EdgeNeuralReasoningEngine {
         val isOrderCheckout = isStorefrontOrderOrPurchase(query)
         val isExplicitTracking = isExplicitOrderTrackingQuery(query)
 
+        // NEVER execute tools on order checkout, coordinates message, or polite acknowledgments
+        if (isOrderCheckout ||
+            com.example.domain.commerce.OrderCustomerInfoParser.isDeliveryCoordinatesMessage(query) ||
+            com.example.domain.commerce.OrderCustomerInfoParser.isFollowUpAcknowledgment(query)
+        ) {
+            return emptyList()
+        }
+
         // 1. check_order_status
         // CRITICAL: NEVER trigger on initial storefront order messages or purchase requests.
         // Only trigger on explicit tracking requests for existing orders.
@@ -314,7 +322,20 @@ object EdgeNeuralReasoningEngine {
         val isOrderCheckout = isStorefrontOrderOrPurchase(q)
         val isExplicitTracking = isExplicitOrderTrackingQuery(q)
 
-        // 0. ABSOLUTE TOP PRIORITY: E-commerce Storefront Order (Scénario de vente normal)
+        val isCoordsMessage = !isOrderCheckout && com.example.domain.commerce.OrderCustomerInfoParser.isDeliveryCoordinatesMessage(q)
+        val isAckMessage = !isOrderCheckout && com.example.domain.commerce.OrderCustomerInfoParser.isFollowUpAcknowledgment(q)
+
+        // 0.0 CASE: Customer providing delivery coordinates (Nom, Ville, Adresse, Tel)
+        if (isCoordsMessage) {
+            return "Merci beaucoup pour ces informations ! Un agent commercial va vous appeler sous peu pour finaliser et confirmer votre commande avec vous. Merci de votre confiance et bonne journée !"
+        }
+
+        // 0.1 CASE: Follow-up polite acknowledgment ("merci", "ok", "parfait", "c'est noté")
+        if (isAckMessage) {
+            return "Je vous en prie ! Nous restons à votre entière disposition. Très bonne journée et à très bientôt !"
+        }
+
+        // 0.2 ABSOLUTE TOP PRIORITY: E-commerce Storefront Order (Scénario de vente normal)
         // Must NEVER be hijacked by check_order_status or any tool!
         val hasOrderIntent = isOrderCheckout ||
                 (!isExplicitTracking && (
@@ -330,30 +351,22 @@ object EdgeNeuralReasoningEngine {
                 ))
 
         if (isOrderCheckout || hasOrderIntent) {
-            val hasDeliveryInfo = (qLower.contains("adresse") && qLower.contains("ville")) ||
-                    qLower.contains("mon adresse") ||
-                    Regex("""\b0[5-7]\d{8}\b|\b\+212[5-7]\d{8}\b""").containsMatchIn(q)
+            val matchedProd = products.firstOrNull { prod ->
+                prod.title.length >= 3 && qLower.contains(prod.title.lowercase(Locale.getDefault()))
+            } ?: products.firstOrNull()
 
-            if (hasDeliveryInfo) {
-                return "Merci beaucoup pour ces informations ! Un agent commercial va vous appeler sous peu pour finaliser et confirmer votre commande avec vous. Merci de votre confiance et bonne journée !"
-            } else {
-                val matchedProd = products.firstOrNull { prod ->
-                    prod.title.length >= 3 && qLower.contains(prod.title.lowercase(Locale.getDefault()))
-                } ?: products.firstOrNull()
+            val prodName = matchedProd?.title
+                ?: Regex("""(?i)produit\s*:\s*([^\n\r,]+)""").find(q)?.groupValues?.get(1)?.trim()
+                ?: "votre article"
 
-                val prodName = matchedProd?.title
-                    ?: Regex("""(?i)produit\s*:\s*([^\n\r,]+)""").find(q)?.groupValues?.get(1)?.trim()
-                    ?: "votre article"
-
-                return buildString {
-                    append("Bonjour ! 👋 Je vous confirme avec plaisir que $prodName est bien disponible en stock.\n\n")
-                    append("Pour préparer votre livraison, pourriez-vous me préciser :\n")
-                    append("• Nom complet\n")
-                    append("• Ville de livraison\n")
-                    append("• Adresse exacte\n")
-                    append("• Numéro de téléphone de contact\n\n")
-                    append("Un agent commercial va vous appeler sous peu pour finaliser et confirmer votre commande avec vous. Merci de votre confiance et bonne journée !")
-                }
+            return buildString {
+                append("Bonjour ! 👋 Je vous confirme avec plaisir que $prodName est bien disponible en stock.\n\n")
+                append("Pour préparer votre livraison, pourriez-vous me préciser :\n")
+                append("• Nom complet\n")
+                append("• Ville de livraison\n")
+                append("• Adresse exacte\n")
+                append("• Numéro de téléphone de contact\n\n")
+                append("Dès réception de vos coordonnées, un agent commercial va vous appeler pour valider et confirmer votre commande !")
             }
         }
 
@@ -614,21 +627,9 @@ object EdgeNeuralReasoningEngine {
         // 4. CASE: Identity & Role query ("Qui es-tu ?", "Qui et tu", "Que fais-tu ?", "Quesque tu fait")
         if (hasIdentityIntent || hasRoleIntent) {
             return buildString {
-                append("$greetingIntro Je vous explique tout en détail :\n\n")
-                append("🤖 **Qui je suis :**\n")
-                val roleTitle = when {
-                    agentRole.equals("Commercial", ignoreCase = true) -> "assistant commercial et conseiller client"
-                    agentRole.equals("Support", ignoreCase = true) -> "assistant de support technique et d'assistance"
-                    agentRole.equals("Scheduling", ignoreCase = true) -> "agent d'astreinte et de planification"
-                    else -> "assistant IA d'entreprise"
-                }
-                append("Je suis votre $roleTitle, connecté en direct sur cette ligne WhatsApp (modèle : **$modelName**, accéléré sur **$backend**).\n\n")
-                append("🎯 **Ce que je fais au quotidien :**\n")
-                append("• **Réponses immédiates 24h/24** : Je réponds sans attente aux sollicitations de vos clients et partenaires.\n")
-                append("• **Information et orientation** : Je présente nos offres, nos disponibilités, nos tarifs et nos services.\n")
-                append("• **Traitement automatisé** : Prise de rendez-vous, suivi logistique de commandes et qualification des demandes.\n")
-                append("• **Confidentialité totale** : Tout fonctionne directement sur votre infrastructure locale, sans partage de données avec des tiers.$nightNotice\n\n")
-                append("Comment puis-je vous être utile aujourd'hui ?")
+                append("Bonjour ! 👋 Je fais partie de l'équipe commerciale de notre boutique en ligne.\n\n")
+                append("Je suis là pour vous renseigner directement sur nos articles, nos disponibilités et nos tarifs, et vous aider à finaliser vos commandes avec livraison partout au Maroc (paiement à la réception).\n\n")
+                append("Quel article ou catégorie de produit vous intéresse aujourd'hui ?$nightNotice")
             }
         }
 
@@ -763,20 +764,20 @@ object EdgeNeuralReasoningEngine {
         // 16. CASE: System prompt adherence for custom instructions
         if (!systemPrompt.isNullOrBlank() && (systemPrompt.length > 30)) {
             val promptFirstLine = systemPrompt.lines().firstOrNull { it.isNotBlank() } ?: ""
-            if (promptFirstLine.contains("assistant", ignoreCase = true) || promptFirstLine.contains("agent", ignoreCase = true)) {
+            if (promptFirstLine.contains("commercial", ignoreCase = true) || promptFirstLine.contains("conseiller", ignoreCase = true) || promptFirstLine.contains("vendeur", ignoreCase = true) || promptFirstLine.contains("agent", ignoreCase = true) || promptFirstLine.contains("assistant", ignoreCase = true)) {
                 return buildString {
-                    append("Bonjour ! 👋 J'ai bien reçu votre message : *« $q »*.\n\n")
-                    append("En tant qu'assistant sur cette ligne WhatsApp, je suis à votre entière disposition pour vous renseigner, vous présenter nos prestations et vous accompagner au mieux.\n\n")
-                    append("Pourriez-vous me préciser votre besoin (tarif, démonstration, question technique ou prise de rendez-vous) afin que je vous apporte la solution la plus adaptée ?")
+                    append("Bonjour ! 👋 J'ai bien reçu votre message.\n\n")
+                    append("Je fais partie de l'équipe commerciale de notre boutique et je suis à votre entière disposition pour vous renseigner sur nos articles et vos commandes.\n\n")
+                    append("En quoi puis-je vous renseigner aujourd'hui ?")
                 }
             }
         }
 
-        // 17. Ultimate Fallback: Fluid, courteous, natural conversational response (NEVER technical canned jargon)
+        // 17. Ultimate Fallback: Fluid, courteous, natural human commercial response (NEVER mentions AI/bot)
         return buildString {
             append("Bonjour ! 👋 J'ai bien reçu votre message.\n\n")
-            append("En tant qu'assistant WhatsApp de notre entreprise, je suis là pour répondre à toutes vos questions, vous présenter nos services ou vous mettre en relation avec la bonne personne.\n\n")
-            append("Pourriez-vous me préciser un peu plus votre demande afin que je puisse vous renseigner avec toute la précision nécessaire ?")
+            append("Je fais partie de l'équipe commerciale de notre boutique et je suis à votre entière disposition pour vous renseigner sur nos articles et vos commandes.\n\n")
+            append("En quoi puis-je vous renseigner aujourd'hui ?")
         }
     }
 }
