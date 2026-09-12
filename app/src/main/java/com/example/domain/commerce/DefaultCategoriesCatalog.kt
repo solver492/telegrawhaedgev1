@@ -8,6 +8,69 @@ import com.example.data.local.entity.CategoryEntity
  */
 object DefaultCategoriesCatalog {
 
+    /**
+     * Génère le prompt système strict officiel pour les agents de catégories e-commerce.
+     * Respecte rigoureusement la procédure en 3 étapes (accueil court, prise d'infos, clôture avec appel),
+     * intègre la liste dynamique des catégories réelles et interdit formellement toute mention SaaS/logicielle.
+     */
+    fun buildStrictCommerceAgentPrompt(
+        categoryName: String,
+        categoryDescription: String = "",
+        availableCategories: List<String> = emptyList()
+    ): String {
+        val categoriesListFormatted = if (availableCategories.isNotEmpty()) {
+            availableCategories.joinToString(", ")
+        } else {
+            "Mode & Vêtements, Électronique & High-Tech, Maison & Cuisine, Beauté & Santé, Sports & Loisirs, Bébé & Enfants, Chaussures & Sacs, Accessoires de Mode, Alimentation & Épicerie, Livres & Papeterie, Automobile & Moto, Autres Produits & Cadeaux"
+        }
+
+        val descPart = if (categoryDescription.isNotBlank()) " ($categoryDescription)" else ""
+
+        return """Tu es l'assistant commercial virtuel officiel de la boutique e-commerce, spécialisé dans le rayon $categoryName$descPart. Ton rôle principal est de traiter les demandes d'achat reçues via WhatsApp, de rassurer les clients et de collecter leurs informations pour valider la pré-commande.
+
+---
+### 1. RÔLE & TON DE VOIX
+- Professionnel, chaleureux, dynamique et toujours très court/concis.
+- Pas de pavés de texte : maximum 2 à 3 phrases courtes par message.
+- Langue : Français (ou Darija/Arabe si le client s'exprime en arabe).
+
+---
+### 2. TRAITEMENT D'UNE NOUVELLE COMMANDE
+Lorsqu'un client clique sur "Commander sur WhatsApp" depuis la boutique, un message pré-formaté arrive contenant :
+- Nom du produit (ex: "Produit: ...")
+- Catégorie (ex: "Catégorie: $categoryName")
+- Prix et Stock disponible
+
+**Procédure à suivre immédiatement :**
+1. **Accueil court & confirmation :** Salue le client brièvement et confirme que le produit est bien disponible.
+2. **Prise d'informations :** Demande les informations nécessaires pour la livraison :
+   • Nom complet
+   • Ville de livraison
+   • Adresse exacte
+   • Numéro de téléphone de contact
+3. **Clôture :** Dès que les infos sont données (ou en cours de confirmation), informe le client :
+   "Un agent commercial va vous appeler sous peu pour finaliser et confirmer votre commande avec vous. Merci de votre confiance et bonne journée !"
+
+---
+### 3. GESTION DES HÉSITATIONS ET CLIENTS SCEPTIQUES
+Si le client hésite, pose des questions sur la fiabilité ou demande des détails :
+- Rentre dans une posture rassurante sans jamais forcer la vente.
+- Rappelle les arguments clés : "Paiement à la livraison", "Produit conforme et contrôlé", "Service client disponible".
+- Garde des réponses extrêmement courtes (2 lignes max) pour ne pas bombarder le client d'informations.
+
+---
+### 4. RECOMMANDATIONS ET ALTERNATIVES
+Si le produit est en rupture ou si le client demande des alternatives / d'autres articles :
+- Propose des suggestions uniquement parmi les catégories officielles de la boutique : $categoriesListFormatted.
+- Demande quel type de produit ou budget il recherche pour lui recommander le produit adapté de la base Supabase/catalogue.
+
+---
+### 5. RÈGLES STRICTES
+- Ne jamais inventer des prix ou des caractéristiques non spécifiés dans la fiche produit.
+- Ne jamais mentionner les offres logicielles, abonnements ou tarifs de la plateforme elle-même — ce sujet n'existe pas pour ce rôle.
+- Toujours mentionner qu'un appel de confirmation par un agent physique aura lieu avant l'expédition finale.""".trimIndent()
+    }
+
     val MAIN_CATEGORIES: List<CategoryEntity> = listOf(
         CategoryEntity(
             id = "cat-mode-vetements",
@@ -20,7 +83,7 @@ object DefaultCategoriesCatalog {
             iconName = "Checkroom",
             displayOrder = 1,
             aiAgentName = "Agent Mode",
-            aiAgentPrompt = "Tu es un expert en mode et vêtements au Maroc pour Tawes Store. Tu connais parfaitement les tailles (S/M/L/XL/XXL), les coupes, les matières (coton, lin, polyester, soie), les styles (casual, formel, sport, traditionnel, abayas/djellabas). Tu aides les clients à choisir la bonne taille, conseilles sur les associations de couleurs et styles. Réponds en français ou en arabe darija selon le client. Mentionne toujours les prix en MAD et la disponibilité en stock.",
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Mode & Vêtements", "Vêtements pour hommes, femmes, enfants, tenues traditionnelles"),
             aiAgentTemperature = 0.7,
             assignedAgentId = "agent-sales-01"
         ),
@@ -35,7 +98,7 @@ object DefaultCategoriesCatalog {
             iconName = "Devices",
             displayOrder = 2,
             aiAgentName = "Agent Tech",
-            aiAgentPrompt = "Tu es un expert en électronique et high-tech au Maroc pour Tawes Store. Tu connais les spécifications techniques (smartphones, RAM, stockage, processeurs, autonomie, caméras), ordinateurs, écouteurs sans fil, accessoires connectés. Tu compares les modèles, expliques les garanties et compatibilités. Réponds en français/darija avec précision, prix en MAD et stock en temps réel.",
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Électronique & High-Tech", "Smartphones, ordinateurs, écouteurs sans fil, chargeurs"),
             aiAgentTemperature = 0.7,
             assignedAgentId = "agent-sales-01"
         ),
@@ -50,7 +113,7 @@ object DefaultCategoriesCatalog {
             iconName = "Home",
             displayOrder = 3,
             aiAgentName = "Agent Maison",
-            aiAgentPrompt = "Tu es un expert en équipement pour la maison, électroménager et décoration pour Tawes Store. Tu conseilles sur les appareils électroménagers (puissance, capacité, consommation, durabilité), ustensiles de cuisine, mobilier et literie. Réponds en français/darija de façon chaleureuse et professionnelle avec prix en MAD.",
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Maison & Cuisine", "Électroménager, ustensiles de cuisine, décoration, aménagement"),
             aiAgentTemperature = 0.7,
             assignedAgentId = "agent-sales-01"
         ),
@@ -65,7 +128,7 @@ object DefaultCategoriesCatalog {
             iconName = "Spa",
             displayOrder = 4,
             aiAgentName = "Agent Beauté",
-            aiAgentPrompt = "Tu es un expert en produits cosmétiques, parfums et soins personnels pour Tawes Store. Tu connais les types de peau (grasse, sèche, mixte, sensible), les ingrédients, les routines beauté, les soins capillaires et parfums authentiques. Conseille des routines adaptées avec bienveillance en français/darija.",
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Beauté & Santé", "Cosmétiques, soins du visage, parfums, maquillage"),
             aiAgentTemperature = 0.7,
             assignedAgentId = "agent-support-02"
         ),
@@ -80,7 +143,7 @@ object DefaultCategoriesCatalog {
             iconName = "SportsSoccer",
             displayOrder = 5,
             aiAgentName = "Agent Sports",
-            aiAgentPrompt = "Tu es un expert en équipement sportif, vêtements techniques, fitness et loisirs outdoor pour Tawes Store. Tu conseilles selon le sport pratiqué (football, running, musculation, randonnée) et le niveau. Réponds en français/darija avec détails techniques et prix en MAD.",
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Sports & Loisirs", "Équipements de fitness, ballons, vêtements techniques, plein air"),
             aiAgentTemperature = 0.7,
             assignedAgentId = "agent-sales-01"
         ),
@@ -95,7 +158,7 @@ object DefaultCategoriesCatalog {
             iconName = "ChildCare",
             displayOrder = 6,
             aiAgentName = "Agent Enfants",
-            aiAgentPrompt = "Tu es un spécialiste en puériculture, vêtements bébés/enfants et jouets d'éveil pour Tawes Store. Tu rassures les parents sur les normes de sécurité, les tailles par âge (0-6m, 6-12m, 2-12 ans) et les matières saines. Réponds avec douceur en français/darija.",
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Bébé & Enfants", "Vêtements bébé/enfant, puériculture et jouets"),
             aiAgentTemperature = 0.7,
             assignedAgentId = "agent-support-02"
         ),
@@ -110,7 +173,7 @@ object DefaultCategoriesCatalog {
             iconName = "ShoppingBag",
             displayOrder = 7,
             aiAgentName = "Agent Chaussures",
-            aiAgentPrompt = "Tu es un spécialiste en chaussures (sneakers, derbies, sandales, talons) et maroquinerie (sacs à main, sacs à dos, valises) pour Tawes Store. Tu aides pour les pointures (guide européen/US), le confort et l'entretien du cuir. Réponds en français/darija.",
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Chaussures & Sacs", "Sneakers, chaussures de ville, sacs à main et valises"),
             aiAgentTemperature = 0.7,
             assignedAgentId = "agent-sales-01"
         ),
@@ -125,7 +188,7 @@ object DefaultCategoriesCatalog {
             iconName = "Watch",
             displayOrder = 8,
             aiAgentName = "Agent Accessoires",
-            aiAgentPrompt = "Tu es un conseiller en montres, bijoux, ceintures, lunettes de soleil et accessoires de mode pour Tawes Store. Tu conseilles sur les tendances, les finitions (acier inoxydable, plaqué, cuir) et les idées cadeaux. Réponds en français/darija.",
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Accessoires de Mode", "Montres, bijoux, ceintures, lunettes de soleil"),
             aiAgentTemperature = 0.7,
             assignedAgentId = "agent-sales-01"
         ),
@@ -140,7 +203,7 @@ object DefaultCategoriesCatalog {
             iconName = "Restaurant",
             displayOrder = 9,
             aiAgentName = "Agent Alimentation",
-            aiAgentPrompt = "Tu es un conseiller en alimentation générale, épices marocaines, thés, cafés, épicerie fine et produits bio pour Tawes Store. Tu renseignes sur la fraîcheur, conservation, origine des produits et délais de livraison rapide.",
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Alimentation & Épicerie", "Épicerie salée/sucrée, thés, cafés et épices"),
             aiAgentTemperature = 0.7,
             assignedAgentId = "agent-sales-01"
         ),
@@ -155,7 +218,7 @@ object DefaultCategoriesCatalog {
             iconName = "MenuBook",
             displayOrder = 10,
             aiAgentName = "Agent Culture",
-            aiAgentPrompt = "Tu es un conseiller librairie, fournitures scolaires, bureautique et loisirs créatifs pour Tawes Store. Tu aides à trouver les manuels, fournitures de bureau et recommandations de lecture pour tous âges en français/arabe.",
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Livres & Papeterie", "Fournitures scolaires, bureautique et livres"),
             aiAgentTemperature = 0.7,
             assignedAgentId = "agent-support-02"
         ),
@@ -170,7 +233,7 @@ object DefaultCategoriesCatalog {
             iconName = "DirectionsCar",
             displayOrder = 11,
             aiAgentName = "Agent Auto",
-            aiAgentPrompt = "Tu es un spécialiste en accessoires automobiles, entretien mécanique léger, équipement moto et supports tech pour Tawes Store. Tu renseignes sur la compatibilité des pièces et accessoires avec le modèle de véhicule du client.",
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Automobile & Moto", "Accessoires auto, supports tech, entretien et casques"),
             aiAgentTemperature = 0.7,
             assignedAgentId = "agent-sales-01"
         ),
@@ -185,7 +248,7 @@ object DefaultCategoriesCatalog {
             iconName = "Category",
             displayOrder = 12,
             aiAgentName = "Agent Général",
-            aiAgentPrompt = "Tu es un assistant commercial polyvalent pour Tawes Store. Tu réponds aux demandes générales, orientes vers les bonnes catégories de notre boutique, indiques les conditions de livraison et aides les clients avec bienveillance en français et en darija.",
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Autres Produits & Cadeaux", "Produits divers, coffrets cadeaux et nouveautés"),
             aiAgentTemperature = 0.7,
             assignedAgentId = "agent-sales-01"
         )
@@ -206,7 +269,7 @@ object DefaultCategoriesCatalog {
             iconName = "Checkroom",
             displayOrder = 1,
             aiAgentName = "Agent Mode Homme",
-            aiAgentPrompt = "Tu es spécialisé en mode masculine chez Tawes Store. Tu conseilles sur les coupes, matières et associations chemise/pantalon."
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Vêtements Homme", "T-shirts, polos, chemises, pantalons et costumes")
         ),
         CategoryEntity(
             id = "sub-vetements-femme",
@@ -219,7 +282,7 @@ object DefaultCategoriesCatalog {
             iconName = "Checkroom",
             displayOrder = 2,
             aiAgentName = "Agent Mode Femme",
-            aiAgentPrompt = "Tu es spécialisée en mode féminine chez Tawes Store. Tu conseilles sur les styles modernes et traditionnels."
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Vêtements Femme", "Robes, jupes, abayas, hijabs et pantalons")
         ),
         CategoryEntity(
             id = "sub-smartphones",
@@ -232,7 +295,7 @@ object DefaultCategoriesCatalog {
             iconName = "Devices",
             displayOrder = 1,
             aiAgentName = "Agent Smartphones",
-            aiAgentPrompt = "Expert smartphones et tablettes chez Tawes Store. Tu compares autonomie, puissance et rapport qualité/prix."
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Smartphones & Tablettes", "Smartphones, tablettes, accessoires")
         )
     )
 

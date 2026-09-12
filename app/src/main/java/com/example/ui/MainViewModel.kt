@@ -227,6 +227,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
+            // Mettre à jour les catégories existantes avec le prompt strict officiel
+            val allLocalCats = database.commerceDao().getAllCategoriesList()
+            val catNames = allLocalCats.map { it.name }
+            for (cat in allLocalCats) {
+                val newStrictPrompt = com.example.domain.commerce.DefaultCategoriesCatalog.buildStrictCommerceAgentPrompt(
+                    categoryName = cat.name,
+                    categoryDescription = cat.description ?: "",
+                    availableCategories = catNames
+                )
+                if (cat.aiAgentPrompt != newStrictPrompt) {
+                    database.commerceDao().updateCategory(cat.copy(aiAgentPrompt = newStrictPrompt))
+                }
+            }
+
+            // Nettoyage et isolation des sources RAG de démonstration SaaS (Pack Starter / Pack Pro)
+            val allSources = database.knowledgeDao().getAllSourcesList()
+            for (source in allSources) {
+                val isSaaS = source.contentData.contains("Pack Starter", ignoreCase = true) ||
+                        source.contentData.contains("Pack Pro", ignoreCase = true) ||
+                        source.contentData.contains("Pack Entreprise", ignoreCase = true) ||
+                        source.contentData.contains("29€") ||
+                        source.contentData.contains("79€") ||
+                        source.contentData.contains("249€") ||
+                        source.title.contains("Tarifs & Services", ignoreCase = true) ||
+                        source.title.contains("Page Web Tarifs", ignoreCase = true)
+
+                if (isSaaS) {
+                    database.knowledgeDao().deleteSource(source.id)
+                } else if (source.agentId == "*") {
+                    // Les sources globales ne doivent plus être ouvertes aveuglément à tous les agents
+                    if (source.contentData.contains("France métropolitaine", ignoreCase = true) || source.contentData.contains("60€")) {
+                        database.knowledgeDao().updateSource(
+                            source.copy(
+                                agentId = "agent-sales-01",
+                                title = "Politique de Livraison & Horaires Maroc",
+                                contentData = "Service client du lundi au vendredi de 08h30 à 19h00. Expédition express sous 24h à 48h ouvrées partout au Maroc. Paiement en espèces à la livraison (Cash on Delivery). Contrôle du colis possible avant paiement."
+                            )
+                        )
+                    } else {
+                        // Limiter la base aux agents de vente/commandes
+                        database.knowledgeDao().updateSource(source.copy(agentId = "agent-sales-01"))
+                    }
+                }
+            }
+
             val waDao = database.whatsAppDao()
             val msgDao = database.whatsAppMessageDao()
             val allInst = waDao.getAllInstancesList()

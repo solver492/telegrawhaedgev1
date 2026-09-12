@@ -231,11 +231,11 @@ Rassure le client, note sa demande et propose de réserver un créneau ou de lai
             knowDao.insertSource(
                 KnowledgeSourceEntity(
                     id = "know-supabase-01",
-                    agentId = "*",
+                    agentId = "agent-sales-01",
                     type = "SUPABASE",
                     title = "Supabase DB - Clients & Commandes",
                     targetUrlOrConfig = "https://xyzcompany.supabase.co/rest/v1/clients",
-                    contentData = "Table clients(id, nom, email, statut_commande, abonnement). Commandes récentes : #CMD-8491 (Livrée), #CMD-9201 (En transit, livraison estimée sous 24h-48h).",
+                    contentData = "Table clients(id, nom, email, statut_commande, historique). Commandes récentes : #CMD-8491 (Livrée), #CMD-9201 (En transit, livraison estimée sous 24h-48h).",
                     supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
                     supabaseTable = "clients_and_orders",
                     isEnabled = true,
@@ -246,7 +246,7 @@ Rassure le client, note sa demande et propose de réserver un créneau ou de lai
             knowDao.insertSource(
                 KnowledgeSourceEntity(
                     id = "know-web-02",
-                    agentId = "agent-sales-02",
+                    agentId = "agent-sales-01",
                     type = "WEB_URL",
                     title = "Conditions de Vente & Livraison",
                     targetUrlOrConfig = "https://example.com/conditions-livraison",
@@ -272,11 +272,11 @@ Rassure le client, note sa demande et propose de réserver un créneau ou de lai
             knowDao.insertSource(
                 KnowledgeSourceEntity(
                     id = "know-text-04",
-                    agentId = "*",
+                    agentId = "agent-sales-01",
                     type = "TEXT_SNIPPET",
-                    title = "Politique de Livraison & Horaires",
+                    title = "Politique de Livraison & Horaires Maroc",
                     targetUrlOrConfig = "Snippet Local",
-                    contentData = "Horaires de notre showroom et service client : du lundi au vendredi de 8h30 à 19h00 sans interruption. Livraison offerte dès 60€ d'achats en France métropolitaine.",
+                    contentData = "Service client du lundi au vendredi de 08h30 à 19h00. Expédition express sous 24h à 48h ouvrées partout au Maroc. Paiement en espèces à la livraison (Cash on Delivery). Contrôle du colis possible avant paiement.",
                     isEnabled = true,
                     chunkCount = 4
                 )

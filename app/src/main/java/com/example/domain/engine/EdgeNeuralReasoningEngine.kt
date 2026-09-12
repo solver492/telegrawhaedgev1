@@ -122,6 +122,13 @@ object EdgeNeuralReasoningEngine {
         // 1. Sources documentaires RAG
         for (source in sources) {
             if (!source.isEnabled || source.contentData.isBlank()) continue
+            val sLowerFull = (source.title + " " + source.contentData).lowercase(Locale.getDefault())
+            if (sLowerFull.contains("pack starter") || sLowerFull.contains("pack pro") || sLowerFull.contains("pack entreprise") ||
+                sLowerFull.contains("29€") || sLowerFull.contains("79€") || sLowerFull.contains("249€") ||
+                sLowerFull.contains("tarifs & services") || sLowerFull.contains("page web tarifs")) {
+                continue
+            }
+
             val sentences = source.contentData.split(".", "\n", ";").filter { it.isNotBlank() }
             val matchingSentences = sentences.filter { sentence ->
                 val sLower = sentence.lowercase(Locale.getDefault())
@@ -161,7 +168,7 @@ object EdgeNeuralReasoningEngine {
         }
 
         if (tools.any { it.name == "get_product_price" && it.isEnabled } &&
-            (q.contains("prix") || q.contains("tarif") || q.contains("cout") || q.contains("forfait") || q.contains("pack") || q.contains("combien") || q.contains("abonnement"))) {
+            (q.contains("prix") || q.contains("tarif") || q.contains("cout") || q.contains("combien") || q.contains("devis"))) {
             val matchedProduct = products.firstOrNull { prod ->
                 prod.title.lowercase(Locale.getDefault()).split(" ").any { kw -> kw.length >= 3 && q.contains(kw) }
             } ?: products.firstOrNull()
@@ -292,8 +299,28 @@ object EdgeNeuralReasoningEngine {
                 qLower.contains("combien") || qLower.contains("devis") ||
                 qLower.contains("facturation") || qLower.contains("combien ca coute") ||
                 qLower.contains("combien coûte") || qLower.contains("payer") ||
-                qLower.contains("abonnement") || qLower.contains("remise") ||
-                qLower.contains("promo") || qLower.contains("pack")
+                qLower.contains("remise") || qLower.contains("promo")
+
+        val hasOrderIntent = qLower.contains("commande") ||
+                qLower.contains("commander") ||
+                qLower.contains("finaliser ma commande") ||
+                qLower.contains("je souhaite finaliser") ||
+                qLower.contains("passer commande") ||
+                qLower.contains("valider la commande") ||
+                qLower.contains("valider ma commande") ||
+                qLower.contains("je veux commander") ||
+                qLower.contains("je prends") ||
+                (qLower.contains("produit:") && (qLower.contains("catégorie:") || qLower.contains("prix:")))
+
+        val hasSkepticismIntent = qLower.contains("fiable") || qLower.contains("arnaque") ||
+                qLower.contains("garantie") || qLower.contains("confiance") ||
+                qLower.contains("qualité") || qLower.contains("hésite") ||
+                qLower.contains("sûr") || qLower.contains("peur") ||
+                qLower.contains("vrai produit")
+
+        val hasAlternativesIntent = qLower.contains("autre") || qLower.contains("rupture") ||
+                qLower.contains("alternative") || qLower.contains("similaire") ||
+                qLower.contains("d'autres modèles") || qLower.contains("autre chose")
 
         val hasConnectivityIntent = qLower.contains("repondra") || qLower.contains("répondra") ||
                 qLower.contains("ci lagent") || qLower.contains("si l'agent") ||
@@ -359,6 +386,43 @@ object EdgeNeuralReasoningEngine {
         val nightNotice = if (isNightGuard) {
             "\n\n🌙 *Note d'astreinte* : Nos bureaux physiques sont actuellement fermés (horaires : 08h30 - 19h00). Mais je reste à votre entière disposition pour noter votre demande, vous renseigner et programmer un rappel dès demain matin !"
         } else ""
+
+        // 2.5 CASE: Order Processing (Top priority - E-commerce Storefront Order)
+        if (hasOrderIntent) {
+            val hasDeliveryInfo = (qLower.contains("adresse") && qLower.contains("ville")) ||
+                    qLower.contains("mon adresse") ||
+                    Regex("""\b0[5-7]\d{8}\b|\b\+212[5-7]\d{8}\b""").containsMatchIn(q)
+
+            if (hasDeliveryInfo) {
+                return "Merci beaucoup pour ces informations ! Un agent commercial va vous appeler sous peu pour finaliser et confirmer votre commande avec vous. Merci de votre confiance et bonne journée !"
+            } else {
+                val matchedProd = products.firstOrNull { prod ->
+                    prod.title.length >= 3 && qLower.contains(prod.title.lowercase(Locale.getDefault()))
+                } ?: products.firstOrNull()
+
+                val prodName = matchedProd?.title ?: Regex("""(?i)produit\s*:\s*([^\n\r,]+)""").find(q)?.groupValues?.get(1)?.trim() ?: "votre article"
+
+                return buildString {
+                    append("Bonjour ! 👋 Je vous confirme avec plaisir que $prodName est bien disponible en stock.\n\n")
+                    append("Pour préparer votre livraison, pourriez-vous me préciser :\n")
+                    append("• Nom complet\n")
+                    append("• Ville de livraison\n")
+                    append("• Adresse exacte\n")
+                    append("• Numéro de téléphone de contact\n\n")
+                    append("Un agent commercial va vous appeler sous peu pour finaliser et confirmer votre commande avec vous. Merci de votre confiance et bonne journée !")
+                }
+            }
+        }
+
+        // 2.6 CASE: Hesitations & Skepticism
+        if (hasSkepticismIntent) {
+            return "Rassurez-vous, le paiement s'effectue uniquement en espèces à la livraison après vérification complète de votre colis. Nos articles sont rigoureusement contrôlés et notre service client reste disponible pour vous accompagner !"
+        }
+
+        // 2.7 CASE: Recommendations & Alternatives
+        if (hasAlternativesIntent) {
+            return "Nous disposons d'un catalogue varié en Mode & Vêtements, Électronique, Maison & Cuisine, Beauté, Chaussures et Accessoires.\nQuel type d'article ou budget précis recherchez-vous pour que je vous propose l'alternative idéale ?"
+        }
 
         // 3. CASE: Multi-Intent (e.g. Identity AND Sales query: "Quelque vous propose a vendre.? Qui et tu ..?")
         if ((hasIdentityIntent || hasRoleIntent) && (hasSalesIntent || hasPricingIntent)) {

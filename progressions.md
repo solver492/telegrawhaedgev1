@@ -111,8 +111,16 @@ Ce document consigne l'ensemble des tâches du projet, leur état d'avancement (
 - [ ] **Phase 6 : Publication site web (Synchronisation Supabase)**
   - *Critère* : Produit validé visible côté site, pas de doublon.
 
-- [ ] **Phase 7 : WhatsApp Commerce (Routage agent par catégorie)**
-  - *Critère* : Message client WhatsApp "Acheter" redirigé vers le bon agent avec les données produit du RAG injectées.
+- [x] **Phase 7 : WhatsApp Commerce (Routage agent par catégorie, RAG dynamique & Protocole strict)**
+  - *Statut* : Terminé et Validé.
+  - *Critère* : Message client WhatsApp "Acheter" ou "Commande Vitrine" redirigé vers l'agent du rayon avec injection RAG dynamique (produit Supabase / catalogue local).
+  - *Détails des corrections apportées* :
+    - Élimination complète de tout texte codé en dur (Packs SaaS 29€/79€/249€, Pack Starter/Pro/Entreprise).
+    - Usine dynamique de prompts `buildStrictCommerceAgentPrompt` garantissant le respect strict de la catégorie assignée, du catalogue réel et de la procédure de commande en 3 étapes.
+    - Clôture systématique des échanges d'achat : *"Un agent commercial va vous appeler sous peu pour finaliser et confirmer votre commande avec vous. Merci de votre confiance et bonne journée !"*.
+    - Migration Room au démarrage dans `MainViewModel` pour purger les anciennes sources de démo SaaS et mettre à jour les prompts des catégories en base de données.
+    - Création automatique d'une pré-commande dans la table `ecommerce_orders` lors de la réception d'une intention d'achat WhatsApp pour rappel immédiat par l'équipe commerciale.
+    - Isolation stricte des sources de connaissances RAG par agent pour éviter toute fuite de données entre catégories.
 
 - [x] **Phase 8 : Commandes + Clients à appeler (Interface opérationnelle)**
   - *Critère* : Confirmation client -> commande créée -> visible dans la liste prioritaire à appeler / valider.

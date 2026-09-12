@@ -195,22 +195,31 @@ class BaileysService(
             return null
         }
 
-        // 3. Retrieve relevant RAG knowledge sources for this agent
-        val knowledgeSources = knowDao.getSourcesForAgent(selectedAgent.id)
+        // 3. Retrieve relevant RAG knowledge sources for this agent (strictly e-commerce scoped)
+        val rawKnowledgeSources = knowDao.getSourcesForAgent(selectedAgent.id)
+        val knowledgeSources = rawKnowledgeSources.filter { source ->
+            val content = (source.title + " " + source.contentData).lowercase(Locale.getDefault())
+            !content.contains("pack starter") &&
+            !content.contains("pack pro") &&
+            !content.contains("pack entreprise") &&
+            !content.contains("29€") &&
+            !content.contains("79€") &&
+            !content.contains("249€") &&
+            !content.contains("tarifs & services") &&
+            !content.contains("page web tarifs")
+        }
 
         // 4. Retrieve enabled MCP tools
         val mcpTools = mcpDao.getEnabledTools()
 
-        // 5. Retrieve dynamic product catalog (RAG) filtered by category if applicable
+        // 5. Retrieve dynamic product catalog (RAG) strictly filtered by category
         var products = if (matchedCategory != null) {
-            val filtered = allProducts.filter { it.categoryId == matchedCategory.id }
-            if (filtered.isNotEmpty()) filtered else allProducts
+            allProducts.filter { it.categoryId == matchedCategory.id }
         } else {
             val agentCats = allCategories.filter { it.assignedAgentId == selectedAgent.id }
             if (agentCats.isNotEmpty()) {
                 val catIds = agentCats.map { it.id }.toSet()
-                val filtered = allProducts.filter { it.categoryId in catIds }
-                if (filtered.isNotEmpty()) filtered else allProducts
+                allProducts.filter { it.categoryId in catIds }
             } else {
                 allProducts
             }
@@ -237,12 +246,26 @@ class BaileysService(
         }
 
         // 6. Execute Local AI Edge Inference with category-specific persona and directives if matched
+        val dynamicCategoryList = allCategories.map { it.name }
+        val strictCategoryPrompt = if (matchedCategory != null) {
+            com.example.domain.commerce.DefaultCategoriesCatalog.buildStrictCommerceAgentPrompt(
+                categoryName = matchedCategory.name,
+                categoryDescription = matchedCategory.description ?: "",
+                availableCategories = dynamicCategoryList
+            )
+        } else {
+            ""
+        }
+
         val baseSystemPrompt = buildString {
             if (!dynamicProductSnippet.isNullOrBlank()) {
                 append(dynamicProductSnippet)
                 append("\n\n")
             }
-            if (matchedCategory != null && matchedCategory.aiAgentPrompt.isNotBlank()) {
+            if (strictCategoryPrompt.isNotBlank()) {
+                append(strictCategoryPrompt)
+                append("\n\n")
+            } else if (matchedCategory != null && matchedCategory.aiAgentPrompt.isNotBlank()) {
                 append(matchedCategory.aiAgentPrompt)
                 append("\n\n")
             }
@@ -262,6 +285,44 @@ class BaileysService(
             mcpTools = mcpTools,
             products = products
         )
+
+        // 6.5 Enregistrement automatique de la pré-commande e-commerce si un message de commande arrive
+        try {
+            val qLower = messageText.lowercase(Locale.getDefault())
+            val isStoreOrder = qLower.contains("commande") || qLower.contains("produit:") ||
+                    qLower.contains("finaliser ma commande") || qLower.contains("je souhaite finaliser") ||
+                    qLower.contains("je veux commander")
+
+            if (isStoreOrder) {
+                val targetProduct = products.firstOrNull() ?: allProducts.firstOrNull { prod ->
+                    prod.title.length >= 3 && qLower.contains(prod.title.lowercase(Locale.getDefault()))
+                }
+                val orderProdName = targetProduct?.title ?: (Regex("""(?i)produit\s*:\s*([^\n\r,]+)""").find(messageText)?.groupValues?.get(1)?.trim() ?: "Produit Vitrine")
+                val orderPrice = targetProduct?.sellingPrice ?: (Regex("""(?i)prix\s*:\s*([0-9.]+)""").find(messageText)?.groupValues?.get(1)?.toDoubleOrNull() ?: 110.0)
+                val orderNum = "#CMD-${(1000..9999).random()}"
+                val customerPhoneNum = senderJid.replace("@s.whatsapp.net", "").replace("@c.us", "")
+
+                val newOrder = com.example.data.local.entity.OrderEntity(
+                    id = "ord-${UUID.randomUUID().toString().take(8)}",
+                    orderNumber = orderNum,
+                    customerName = if (senderJid.contains("@")) "Client WhatsApp ($customerPhoneNum)" else "Client Vitrine",
+                    customerPhone = customerPhoneNum,
+                    deliveryAddress = "À confirmer lors du rappel téléphonique",
+                    deliveryZone = "Maroc Standard",
+                    productId = targetProduct?.id,
+                    productName = orderProdName,
+                    quantity = 1,
+                    totalAmount = orderPrice,
+                    currency = targetProduct?.currency ?: "MAD",
+                    status = "PENDING_CONFIRMATION",
+                    customerCallNotes = "Pré-commande issue de WhatsApp. Rappeler le client pour confirmer nom, ville et adresse de livraison.",
+                    createdAt = System.currentTimeMillis()
+                )
+                database.commerceDao().insertOrder(newOrder)
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("BaileysService", "Erreur création pré-commande: ${e.message}")
+        }
 
         // 6. Record agent response
         val toolsExecutedText = if (inferenceResult.toolCalls.isNotEmpty()) {

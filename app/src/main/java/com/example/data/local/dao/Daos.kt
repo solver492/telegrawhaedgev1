@@ -96,6 +96,9 @@ interface KnowledgeDao {
     @Query("SELECT * FROM knowledge_sources ORDER BY lastIndexedTimestamp DESC")
     fun getAllSources(): Flow<List<KnowledgeSourceEntity>>
 
+    @Query("SELECT * FROM knowledge_sources")
+    suspend fun getAllSourcesList(): List<KnowledgeSourceEntity>
+
     @Query("SELECT * FROM knowledge_sources WHERE (agentId = :agentId OR agentId = '*') AND isEnabled = 1")
     suspend fun getSourcesForAgent(agentId: String): List<KnowledgeSourceEntity>
 
