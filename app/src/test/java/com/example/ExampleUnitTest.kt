@@ -204,4 +204,221 @@ class ExampleUnitTest {
     assertNull("localPath must be null when file is not accessible", item.localPath)
     assertEquals("http://127.0.0.1:8088/media/-100123456789/42/photo_42.jpg", item.getDisplayModel())
   }
+
+  @Test
+  fun initialOrderCheckoutMessage_withEnabledTools_returnsSalesScenario_andNeverDirectTracking() {
+    val agent = com.example.data.local.entity.AgentEntity(
+      id = "agent-sales-02",
+      name = "Conseiller Vente Tawes Store",
+      role = "Commercial e-commerce",
+      systemPrompt = "Tu es un vendeur bienveillant pour la boutique en ligne Tawes Store.",
+      temperature = 0.5f,
+      modelId = "llama-3.2-1b-int4",
+      ragEnabled = true,
+      isActive = true
+    )
+
+    val allTools = listOf(
+      com.example.data.local.entity.McpToolEntity(
+        id = "tool-1",
+        name = "check_order_status",
+        description = "Vérifier le statut d'une commande",
+        isEnabled = true
+      ),
+      com.example.data.local.entity.McpToolEntity(
+        id = "tool-2",
+        name = "get_product_price",
+        description = "Consulter le prix d'un produit",
+        isEnabled = true
+      )
+    )
+
+    val products = listOf(
+      com.example.data.local.entity.ProductEntity(
+        id = "prod-akkipi",
+        title = "Ensemble AKKIPI",
+        sellingPrice = 110.0,
+        currency = "MAD",
+        stockQuantity = 15,
+        status = "PUBLISHED"
+      )
+    )
+
+    val checkoutMessage = """
+      Produit: Ensemble AKKIPI
+      Catégorie: Mode & Vêtements
+      Prix: 110 dh
+      Stock: 15
+      Description: Ensemble élégant deux pièces pour femme...
+      Lien: https://example.com/p/akkipi
+      Je souhaite finaliser ma commande pour ce produit
+    """.trimIndent()
+
+    val result = kotlinx.coroutines.runBlocking {
+      com.example.domain.engine.AiEdgeQuantizerEngine.runAgentInference(
+        agent = agent,
+        customerQuery = checkoutMessage,
+        knowledgeSources = emptyList(),
+        mcpTools = allTools,
+        products = products,
+        orders = emptyList()
+      )
+    }
+
+    val reply = result.replyText
+    assertTrue("Reply must not be empty", reply.isNotBlank())
+
+    // 1. Tool check_order_status ne doit JAMAIS s'exécuter sur un premier message de commande
+    assertFalse("check_order_status must NOT be triggered on initial order checkout",
+      result.toolCalls.any { it.contains("check_order_status") })
+
+    // 2. Doit répondre selon le scénario de vente (accueil + demande coordonnées)
+    assertTrue("Must confirm product availability", reply.contains("Ensemble AKKIPI", ignoreCase = true) || reply.contains("disponible", ignoreCase = true))
+    assertTrue("Must ask for delivery info", reply.contains("Nom complet", ignoreCase = true) || reply.contains("Ville", ignoreCase = true))
+    assertTrue("Must promise sales call", reply.contains("agent commercial va vous appeler", ignoreCase = true))
+
+    // 3. Ne doit JAMAIS renvoyer le texte générique de suivi direct ni le faux code #CMD-9201
+    assertFalse("Must NOT return Suivi de votre commande en direct", reply.contains("Suivi de votre commande en direct", ignoreCase = true))
+    assertFalse("Must NOT return fake #CMD-9201", reply.contains("#CMD-9201"))
+  }
+
+  @Test
+  fun subsequentTrackingMessage_withExistingOrder_executesTool_andReturnsRealOrderData() {
+    val agent = com.example.data.local.entity.AgentEntity(
+      id = "agent-sales-02",
+      name = "Conseiller Vente Tawes Store",
+      role = "Commercial e-commerce",
+      systemPrompt = "Tu es un vendeur pour Tawes Store.",
+      temperature = 0.5f,
+      modelId = "llama-3.2-1b-int4",
+      ragEnabled = true,
+      isActive = true
+    )
+
+    val tools = listOf(
+      com.example.data.local.entity.McpToolEntity(
+        id = "tool-1",
+        name = "check_order_status",
+        description = "Vérifier le statut d'une commande",
+        isEnabled = true
+      )
+    )
+
+    val existingOrders = listOf(
+      com.example.data.local.entity.OrderEntity(
+        id = "ord-real-01",
+        orderNumber = "#CMD-4412",
+        customerName = "Karim Benani",
+        customerPhone = "0612345678",
+        deliveryAddress = "Casablanca, Bd Zerktouni Imm 14",
+        deliveryZone = "Grand Casablanca",
+        productId = "prod-akkipi",
+        productName = "Ensemble AKKIPI Chic",
+        quantity = 1,
+        totalAmount = 110.0,
+        currency = "MAD",
+        status = "IN_DELIVERY",
+        customerCallNotes = "Confirmé",
+        createdAt = System.currentTimeMillis()
+      )
+    )
+
+    val trackingQuery = "Bonjour, où en est ma commande #CMD-4412 svp ?"
+
+    val result = kotlinx.coroutines.runBlocking {
+      com.example.domain.engine.AiEdgeQuantizerEngine.runAgentInference(
+        agent = agent,
+        customerQuery = trackingQuery,
+        knowledgeSources = emptyList(),
+        mcpTools = tools,
+        products = emptyList(),
+        orders = existingOrders,
+        customerPhone = "0612345678"
+      )
+    }
+
+    // 1. Tool check_order_status DOIT s'exécuter
+    assertTrue("check_order_status MUST be executed on explicit tracking query",
+      result.toolCalls.any { it.contains("check_order_status") })
+
+    val reply = result.replyText
+    // 2. Doit afficher les VRAIES données de la commande
+    assertTrue("Reply must mention real order number #CMD-4412", reply.contains("#CMD-4412"))
+    assertTrue("Reply must mention real product Ensemble AKKIPI Chic", reply.contains("Ensemble AKKIPI Chic"))
+    assertTrue("Reply must mention real total 110 MAD", reply.contains("110 MAD"))
+    assertTrue("Reply must mention in delivery status", reply.contains("En cours d'acheminement", ignoreCase = true))
+    assertTrue("Reply must mention destination Casablanca", reply.contains("Casablanca"))
+    assertFalse("Reply must NOT contain hardcoded #CMD-9201", reply.contains("#CMD-9201"))
+  }
+
+  @Test
+  fun subsequentTrackingMessage_withNonExistentOrder_informsCustomerHonestly() {
+    val agent = com.example.data.local.entity.AgentEntity(
+      id = "agent-sales-02",
+      name = "Conseiller Vente",
+      role = "Commercial",
+      systemPrompt = "Tu es un vendeur.",
+      temperature = 0.5f,
+      modelId = "llama-3.2-1b-int4",
+      isActive = true
+    )
+
+    val tools = listOf(
+      com.example.data.local.entity.McpToolEntity(
+        id = "tool-1",
+        name = "check_order_status",
+        description = "Vérifier le statut d'une commande",
+        isEnabled = true
+      )
+    )
+
+    val trackingQuery = "Bonjour, où en est mon colis #CMD-9999 ?"
+
+    val result = kotlinx.coroutines.runBlocking {
+      com.example.domain.engine.AiEdgeQuantizerEngine.runAgentInference(
+        agent = agent,
+        customerQuery = trackingQuery,
+        knowledgeSources = emptyList(),
+        mcpTools = tools,
+        products = emptyList(),
+        orders = emptyList() // aucune commande
+      )
+    }
+
+    assertTrue("Tool should be executed", result.toolCalls.any { it.contains("check_order_status") })
+    val reply = result.replyText
+    assertTrue("Must state that no order was found", reply.contains("aucune commande", ignoreCase = true))
+    assertFalse("Must NOT invent fake #CMD-9201", reply.contains("#CMD-9201"))
+    assertFalse("Must NOT invent fake tomorrow arrival", reply.contains("demain 14h", ignoreCase = true))
+  }
+
+  @Test
+  fun categoryAgents_differBetweenTechAndFashion() {
+    val router = com.example.domain.ai.CategoryAgentRouter()
+    val categories = com.example.domain.commerce.DefaultCategoriesCatalog.ALL_DEFAULT_CATEGORIES
+
+    val techMsg = "Je cherche des écouteurs sans fil bluetooth avec réduction de bruit"
+    val techCat = router.detectCategoryFromMessage(techMsg, categories)
+    assertNotNull(techCat)
+    assertEquals("cat-electronique", techCat?.id)
+    assertEquals("agent-tech-01", techCat?.assignedAgentId)
+
+    val techPrompt = com.example.domain.commerce.DefaultCategoriesCatalog.buildStrictCommerceAgentPrompt(
+      categoryName = techCat!!.name,
+      categoryDescription = techCat.description ?: ""
+    )
+    assertTrue("Tech prompt must focus on tech", techPrompt.contains("Électronique & High-Tech"))
+
+    val fashionMsg = "Je cherche un ensemble robe élégante pour une soirée"
+    val fashionCat = router.detectCategoryFromMessage(fashionMsg, categories)
+    assertNotNull(fashionCat)
+    assertEquals("cat-mode-vetements", fashionCat?.id)
+    assertEquals("agent-sales-02", fashionCat?.assignedAgentId)
+
+    val fashionPrompt = com.example.domain.commerce.DefaultCategoriesCatalog.buildStrictCommerceAgentPrompt(
+      categoryName = fashionCat!!.name,
+      categoryDescription = fashionCat.description ?: ""
+    )
+    assertTrue("Fashion prompt must focus on fashion", fashionPrompt.contains("Mode & Vêtements"))
+  }
 }

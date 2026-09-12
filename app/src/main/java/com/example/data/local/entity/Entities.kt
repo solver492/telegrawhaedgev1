@@ -62,7 +62,7 @@ data class McpToolEntity(
     @PrimaryKey val id: String,
     val name: String,
     val description: String,
-    val schemaJson: String,
+    val schemaJson: String = "{}",
     val endpointUrl: String = "",
     val isEnabled: Boolean = true
 )

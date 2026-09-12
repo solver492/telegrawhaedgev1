@@ -107,7 +107,9 @@ object AiEdgeQuantizerEngine {
         customerQuery: String,
         knowledgeSources: List<KnowledgeSourceEntity>,
         mcpTools: List<McpToolEntity>,
-        products: List<com.example.data.local.entity.ProductEntity> = emptyList()
+        products: List<com.example.data.local.entity.ProductEntity> = emptyList(),
+        orders: List<com.example.data.local.entity.OrderEntity> = emptyList(),
+        customerPhone: String? = null
     ): InferenceResult = withContext(Dispatchers.Default) {
         val activeSources = if (agent.ragEnabled) knowledgeSources else emptyList()
         val activeProducts = if (agent.ragEnabled) products else emptyList()
@@ -122,6 +124,8 @@ object AiEdgeQuantizerEngine {
             knowledgeSources = activeSources,
             mcpTools = mcpTools,
             products = activeProducts,
+            orders = orders,
+            customerPhone = customerPhone,
             agentName = agent.name,
             agentRole = agent.role
         )

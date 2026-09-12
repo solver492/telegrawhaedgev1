@@ -3,6 +3,8 @@ package com.example.domain.engine
 import com.example.data.local.entity.AgentEntity
 import com.example.data.local.entity.KnowledgeSourceEntity
 import com.example.data.local.entity.McpToolEntity
+import com.example.data.local.entity.OrderEntity
+import com.example.data.local.entity.ProductEntity
 import java.util.Locale
 
 /**
@@ -24,7 +26,9 @@ object EdgeNeuralReasoningEngine {
         backend: String = "NPU",
         knowledgeSources: List<KnowledgeSourceEntity> = emptyList(),
         mcpTools: List<McpToolEntity> = emptyList(),
-        products: List<com.example.data.local.entity.ProductEntity> = emptyList(),
+        products: List<ProductEntity> = emptyList(),
+        orders: List<OrderEntity> = emptyList(),
+        customerPhone: String? = null,
         agentName: String? = null,
         agentRole: String? = null
     ): DetailedInferenceOutput {
@@ -51,6 +55,12 @@ object EdgeNeuralReasoningEngine {
                         append("- ${it.title}: ${it.sellingPrice} ${it.currency} (Stock: ${it.stockQuantity}) - ${it.description}\n")
                     }
                 }
+                if (orders.isNotEmpty()) {
+                    append("Commandes récentes en base logistique :\n")
+                    orders.take(5).forEach {
+                        append("- Commande ${it.orderNumber}: ${it.productName}, Montant: ${it.totalAmount} ${it.currency}, Statut: ${it.status}, Client: ${it.customerName} (${it.customerPhone})\n")
+                    }
+                }
             }
 
             val geminiResponse = GeminiClient.generateContent(
@@ -67,7 +77,7 @@ object EdgeNeuralReasoningEngine {
                     latencyMs = elapsed,
                     backendUsed = "Cloud REST (Gemini 3.5 Flash)",
                     ragSnippetsUsed = extractRelevantRagSnippets(prompt, knowledgeSources, products),
-                    mcpToolCalls = evaluateMcpTools(prompt, mcpTools, products)
+                    mcpToolCalls = evaluateMcpTools(prompt, mcpTools, products, orders, customerPhone)
                 )
             }
         }
@@ -77,7 +87,7 @@ object EdgeNeuralReasoningEngine {
         val matchedSnippets = extractRelevantRagSnippets(prompt, knowledgeSources, products)
 
         // 2. MCP Tools Execution
-        val executedTools = evaluateMcpTools(prompt, mcpTools, products)
+        val executedTools = evaluateMcpTools(prompt, mcpTools, products, orders, customerPhone)
 
         // 3. Multi-turn Neural Generation based on semantic intent, persona, knowledge, and tools
         val generatedText = synthesizeNeuralResponse(
@@ -92,7 +102,9 @@ object EdgeNeuralReasoningEngine {
             temperature = temperature,
             backend = backend,
             products = products,
-            knowledgeSources = knowledgeSources
+            knowledgeSources = knowledgeSources,
+            orders = orders,
+            customerPhone = customerPhone
         )
 
         val elapsed = System.currentTimeMillis() - startTime
@@ -154,40 +166,127 @@ object EdgeNeuralReasoningEngine {
         return results
     }
 
+    fun isStorefrontOrderOrPurchase(query: String): Boolean {
+        val q = query.lowercase(Locale.getDefault())
+        return q.contains("finaliser ma commande") ||
+                q.contains("je souhaite finaliser") ||
+                q.contains("passer commande") ||
+                q.contains("je veux commander") ||
+                q.contains("je souhaite commander") ||
+                q.contains("valider ma commande") ||
+                q.contains("valider la commande") ||
+                q.contains("nouvelle commande") ||
+                q.contains("achat de ce produit") ||
+                (q.contains("produit:") && (q.contains("catégorie:") || q.contains("categorie:") || q.contains("prix:"))) ||
+                (q.contains("produit :") && (q.contains("catégorie :") || q.contains("categorie :") || q.contains("prix :")))
+    }
+
+    fun isExplicitOrderTrackingQuery(query: String): Boolean {
+        if (isStorefrontOrderOrPurchase(query)) return false
+        val q = query.lowercase(Locale.getDefault())
+        val hasExplicitTrackingWords = q.contains("où en est ma commande") || q.contains("ou en est ma commande") ||
+                q.contains("où en est mon colis") || q.contains("ou en est mon colis") ||
+                q.contains("suivi de ma commande") || q.contains("suivi de mon colis") ||
+                q.contains("suivi commande") || q.contains("suivi colis") ||
+                q.contains("suivi du colis") || q.contains("statut de ma commande") ||
+                q.contains("statut de mon colis") || q.contains("statut commande") ||
+                q.contains("état de ma commande") || q.contains("etat de ma commande") ||
+                q.contains("quand arrive ma commande") || q.contains("quand arrive mon colis") ||
+                q.contains("suivre ma commande") || q.contains("suivre mon colis") ||
+                q.contains("tracking") ||
+                (q.contains("colis") && (q.contains("arriver") || q.contains("reçu") || q.contains("recu") || q.contains("reception") || q.contains("position")))
+
+        val hasOrderRefWithQuery = Regex("""(?i)(?:#?cmd-[\w-]+|ord-[\w-]+)""").containsMatchIn(q) &&
+                (q.contains("suivi") || q.contains("status") || q.contains("statut") || q.contains("colis") || q.contains("où") || q.contains("ou") || q.contains("nouvelle") || q.contains("livraison") || q.contains("info"))
+
+        return hasExplicitTrackingWords || hasOrderRefWithQuery
+    }
+
     private fun evaluateMcpTools(
         query: String,
         tools: List<McpToolEntity>,
-        products: List<com.example.data.local.entity.ProductEntity> = emptyList()
+        products: List<ProductEntity> = emptyList(),
+        orders: List<OrderEntity> = emptyList(),
+        customerPhone: String? = null
     ): List<String> {
         val executed = mutableListOf<String>()
         val q = query.lowercase(Locale.getDefault())
+        val isOrderCheckout = isStorefrontOrderOrPurchase(query)
+        val isExplicitTracking = isExplicitOrderTrackingQuery(query)
 
-        if (tools.any { it.name == "check_order_status" && it.isEnabled } &&
-            (q.contains("commande") || q.contains("cmd") || q.contains("colis") || q.contains("livraison") || q.contains("suivi") || q.contains("status") || q.contains("tracking"))) {
-            executed.add("check_order_status(order_id=\"#CMD-9201\") -> Statut: En cours de livraison (Transporteur Express, arrivée prévue demain 14h)")
-        }
+        // 1. check_order_status
+        // CRITICAL: NEVER trigger on initial storefront order messages or purchase requests.
+        // Only trigger on explicit tracking requests for existing orders.
+        if (tools.any { it.name == "check_order_status" && it.isEnabled } && isExplicitTracking) {
+            val orderRefMatch = Regex("""(?i)(#?cmd-[\w-]+|ord-[\w-]+)""").find(query)
+            val orderRef = orderRefMatch?.value?.trim()
+            val cleanPhone = customerPhone?.filter { it.isDigit() }?.takeLast(9) ?: ""
 
-        if (tools.any { it.name == "get_product_price" && it.isEnabled } &&
-            (q.contains("prix") || q.contains("tarif") || q.contains("cout") || q.contains("combien") || q.contains("devis"))) {
-            val matchedProduct = products.firstOrNull { prod ->
-                prod.title.lowercase(Locale.getDefault()).split(" ").any { kw -> kw.length >= 3 && q.contains(kw) }
-            } ?: products.firstOrNull()
-            if (matchedProduct != null) {
-                val price = matchedProduct.sellingPrice ?: matchedProduct.purchasePrice ?: 0.0
-                executed.add("get_product_price(item=\"${matchedProduct.title}\") -> ${price.toInt()} ${matchedProduct.currency} (Disponibilité: ${matchedProduct.stockQuantity} en stock)")
+            val foundOrder = if (!orderRef.isNullOrBlank()) {
+                orders.firstOrNull { ord ->
+                    ord.orderNumber.equals(orderRef, ignoreCase = true) ||
+                    ord.orderNumber.replace("#", "").equals(orderRef.replace("#", ""), ignoreCase = true) ||
+                    ord.id.equals(orderRef, ignoreCase = true)
+                }
+            } else if (cleanPhone.length >= 8) {
+                orders.firstOrNull { ord ->
+                    ord.customerPhone.filter { it.isDigit() }.takeLast(9) == cleanPhone
+                }
+            } else null
+
+            if (foundOrder != null) {
+                executed.add("check_order_status(order_id=\"${foundOrder.orderNumber}\", found=true, status=\"${foundOrder.status}\")")
             } else {
-                executed.add("get_product_price(item=\"Catalogue\") -> Veuillez préciser le produit souhaité pour obtenir son tarif exact.")
+                executed.add("check_order_status(ref=\"${orderRef ?: "none"}\", found=false)")
             }
         }
 
-        if (tools.any { it.name == "book_appointment" && it.isEnabled } &&
-            (q.contains("rendez-vous") || q.contains("rdv") || q.contains("créneau") || q.contains("dispo") || q.contains("appel") || q.contains("planning") || q.contains("reserver"))) {
-            executed.add("book_appointment(date=\"Demain\", time=\"15:00\") -> Créneau temporaire bloqué (en attente confirmation client)")
+        // 2. get_product_price
+        // Do NOT trigger if this is an order checkout (customer already has pricing information)
+        val isPriceInquiry = !isOrderCheckout && !isExplicitTracking &&
+                (q.contains("prix") || q.contains("tarif") || q.contains("cout") || q.contains("coût") || q.contains("combien") || q.contains("devis"))
+
+        if (tools.any { it.name == "get_product_price" && it.isEnabled } && isPriceInquiry) {
+            val matchedProduct = products.firstOrNull { prod ->
+                prod.title.lowercase(Locale.getDefault()).split(" ").any { kw -> kw.length >= 3 && q.contains(kw) }
+            }
+            if (matchedProduct != null) {
+                val price = matchedProduct.sellingPrice ?: matchedProduct.purchasePrice ?: 0.0
+                executed.add("get_product_price(item=\"${matchedProduct.title}\", found=true, price=\"${price.toInt()} ${matchedProduct.currency}\", stock=${matchedProduct.stockQuantity})")
+            } else {
+                executed.add("get_product_price(found=false)")
+            }
         }
 
-        if (tools.any { it.name == "transfer_to_human" && it.isEnabled } &&
-            (q.contains("humain") || q.contains("conseiller") || q.contains("bloqué") || q.contains("responsable") || q.contains("urgent") || q.contains("plainte") || q.contains("litige"))) {
-            executed.add("transfer_to_human(reason=\"Assistance personnalisée requise\") -> Transfert effectué vers l'équipe support WhatsApp")
+        // 3. book_appointment
+        // Requires explicit appointment request. Never trigger on 'dispo' (stock) or 'appel' (phone call).
+        val isAppointmentInquiry = !isOrderCheckout && !isExplicitTracking && (
+            q.contains("prendre rendez-vous") || q.contains("prendre un rendez-vous") ||
+            q.contains("prendre rdv") || q.contains("fixer un rendez-vous") ||
+            q.contains("réserver un créneau") || q.contains("reserver un creneau") ||
+            q.contains("bloquer un créneau") ||
+            (q.contains("rendez-vous") && (q.contains("demain") || q.contains("date") || q.contains("heure") || q.contains("planning") || q.contains("créneau")))
+        )
+
+        if (tools.any { it.name == "book_appointment" && it.isEnabled } && isAppointmentInquiry) {
+            executed.add("book_appointment(status=\"pending_slot\")")
+        }
+
+        // 4. transfer_to_human
+        // Explicit human handover only. Do NOT trigger on common words like 'conseiller' when used as verb.
+        val isHumanTransferInquiry = !isOrderCheckout && (
+            q.contains("parler à un humain") || q.contains("parler a un humain") ||
+            q.contains("parler à un conseiller") || q.contains("parler a un conseiller") ||
+            q.contains("parler à un agent") || q.contains("parler a un agent") ||
+            q.contains("agent humain") || q.contains("personne humaine") ||
+            q.contains("vrai personne") || q.contains("vraie personne") ||
+            q.contains("interlocuteur humain") || q.contains("parler au responsable") ||
+            q.contains("service réclamation") || q.contains("service reclamation") ||
+            q.contains("porter plainte") || q.contains("litige")
+        )
+
+        if (tools.any { it.name == "transfer_to_human" && it.isEnabled } && isHumanTransferInquiry) {
+            executed.add("transfer_to_human(reason=\"Assistance humaine demandée\")")
         }
 
         return executed
@@ -204,59 +303,160 @@ object EdgeNeuralReasoningEngine {
         executedTools: List<String>,
         temperature: Float,
         backend: String,
-        products: List<com.example.data.local.entity.ProductEntity> = emptyList(),
-        knowledgeSources: List<KnowledgeSourceEntity> = emptyList()
+        products: List<ProductEntity> = emptyList(),
+        knowledgeSources: List<KnowledgeSourceEntity> = emptyList(),
+        orders: List<OrderEntity> = emptyList(),
+        customerPhone: String? = null
     ): String {
         val q = prompt.trim()
         val qLower = q.lowercase(Locale.getDefault())
 
-        // 1. Tool-triggered concrete responses (highest priority when tools are invoked)
+        val isOrderCheckout = isStorefrontOrderOrPurchase(q)
+        val isExplicitTracking = isExplicitOrderTrackingQuery(q)
+
+        // 0. ABSOLUTE TOP PRIORITY: E-commerce Storefront Order (Scénario de vente normal)
+        // Must NEVER be hijacked by check_order_status or any tool!
+        val hasOrderIntent = isOrderCheckout ||
+                (!isExplicitTracking && (
+                    qLower.contains("commande") ||
+                    qLower.contains("commander") ||
+                    qLower.contains("finaliser ma commande") ||
+                    qLower.contains("je souhaite finaliser") ||
+                    qLower.contains("passer commande") ||
+                    qLower.contains("valider la commande") ||
+                    qLower.contains("valider ma commande") ||
+                    qLower.contains("je veux commander") ||
+                    qLower.contains("je prends")
+                ))
+
+        if (isOrderCheckout || hasOrderIntent) {
+            val hasDeliveryInfo = (qLower.contains("adresse") && qLower.contains("ville")) ||
+                    qLower.contains("mon adresse") ||
+                    Regex("""\b0[5-7]\d{8}\b|\b\+212[5-7]\d{8}\b""").containsMatchIn(q)
+
+            if (hasDeliveryInfo) {
+                return "Merci beaucoup pour ces informations ! Un agent commercial va vous appeler sous peu pour finaliser et confirmer votre commande avec vous. Merci de votre confiance et bonne journée !"
+            } else {
+                val matchedProd = products.firstOrNull { prod ->
+                    prod.title.length >= 3 && qLower.contains(prod.title.lowercase(Locale.getDefault()))
+                } ?: products.firstOrNull()
+
+                val prodName = matchedProd?.title
+                    ?: Regex("""(?i)produit\s*:\s*([^\n\r,]+)""").find(q)?.groupValues?.get(1)?.trim()
+                    ?: "votre article"
+
+                return buildString {
+                    append("Bonjour ! 👋 Je vous confirme avec plaisir que $prodName est bien disponible en stock.\n\n")
+                    append("Pour préparer votre livraison, pourriez-vous me préciser :\n")
+                    append("• Nom complet\n")
+                    append("• Ville de livraison\n")
+                    append("• Adresse exacte\n")
+                    append("• Numéro de téléphone de contact\n\n")
+                    append("Un agent commercial va vous appeler sous peu pour finaliser et confirmer votre commande avec vous. Merci de votre confiance et bonne journée !")
+                }
+            }
+        }
+
+        // 1. Tool-triggered concrete responses (when explicitly invoked by user)
         if (executedTools.any { it.startsWith("check_order_status") }) {
-            return buildString {
-                append("📦 **Suivi de votre commande en direct**\n\n")
-                append("J'ai vérifié notre système logistique : votre colis est actuellement pris en charge par notre transporteur partenaire.\n")
-                append("• **Statut** : En cours d'acheminement\n")
-                append("• **Livraison estimée** : Sous 24h à 48h ouvrées\n")
-                append("• **Modalité** : Paiement à la livraison après inspection de votre colis.\n\n")
-                append("Un lien de géolocalisation ou un SMS vous sera envoyé par le livreur avant son passage. Avez-vous besoin d'autres précisions ?")
+            val statusCall = executedTools.first { it.startsWith("check_order_status") }
+            val isFound = statusCall.contains("found=true")
+
+            if (isFound) {
+                val orderRefMatch = Regex("""order_id="([^"]+)"""").find(statusCall)?.groupValues?.get(1)
+                val cleanPhone = customerPhone?.filter { it.isDigit() }?.takeLast(9) ?: ""
+                val realOrder = if (!orderRefMatch.isNullOrBlank()) {
+                    orders.firstOrNull {
+                        it.orderNumber.equals(orderRefMatch, ignoreCase = true) ||
+                        it.orderNumber.replace("#", "").equals(orderRefMatch.replace("#", ""), ignoreCase = true) ||
+                        it.id.equals(orderRefMatch, ignoreCase = true)
+                    }
+                } else if (cleanPhone.length >= 8) {
+                    orders.firstOrNull { it.customerPhone.filter { ch -> ch.isDigit() }.takeLast(9) == cleanPhone }
+                } else null
+
+                val orderNum = realOrder?.orderNumber ?: orderRefMatch ?: "votre commande"
+                val prodTitle = realOrder?.productName ?: "votre article"
+                val totalAmt = if (realOrder != null) "${realOrder.totalAmount.toInt()} ${realOrder.currency}" else ""
+                val address = realOrder?.deliveryAddress?.takeIf { it.isNotBlank() && !it.contains("À confirmer", ignoreCase = true) }
+
+                val statusDescription = when (realOrder?.status) {
+                    "PENDING_CONFIRMATION" -> "En attente de confirmation téléphonique (notre équipe commerciale va vous contacter pour valider vos coordonnées de livraison)"
+                    "CONFIRMED_CALL" -> "Confirmée par téléphone — En cours de préparation et d'emballage à l'entrepôt"
+                    "IN_DELIVERY" -> "En cours d'acheminement par notre transporteur partenaire (arrivée sous 24h-48h)"
+                    "DELIVERED" -> "Livrée avec succès"
+                    "CANCELLED" -> "Commande annulée"
+                    else -> "En cours de traitement dans notre système logistique"
+                }
+
+                return buildString {
+                    append("📦 **Suivi de votre commande ($orderNum)**\n\n")
+                    append("J'ai vérifié notre base logistique en direct :\n")
+                    append("• **Article** : $prodTitle\n")
+                    if (totalAmt.isNotBlank()) {
+                        append("• **Montant** : $totalAmt (Paiement à la livraison)\n")
+                    }
+                    append("• **Statut actuel** : $statusDescription\n")
+                    if (!address.isNullOrBlank()) {
+                        append("• **Destination** : $address\n")
+                    }
+                    append("\nNotre livreur vous contactera par téléphone ou SMS dès son arrivée sur place. Avez-vous besoin d'une autre information ?")
+                }
+            } else {
+                return buildString {
+                    append("🔍 **Suivi de commande**\n\n")
+                    append("Après vérification dans notre système, je n'ai trouvé aucune commande enregistrée correspondant à cette référence ou à votre numéro de téléphone.\n\n")
+                    append("Si vous venez tout juste de passer commande sur notre boutique, notre équipe est peut-être en train de l'enregistrer.\n")
+                    append("Pourriez-vous me préciser votre **numéro de commande exact** (ex: #CMD-1234) ou le **numéro de téléphone** utilisé lors de l'achat ?")
+                }
             }
         }
 
         if (executedTools.any { it.startsWith("transfer_to_human") }) {
             return buildString {
                 append("🙋‍♂️ **Prise en charge par notre équipe**\n\n")
-                append("J'ai bien pris note de votre demande spécifique. Votre conversation vient d'être transmise à un conseiller humain de notre équipe.\n\n")
+                append("J'ai bien pris note de votre demande spécifique. Votre conversation vient d'être transmise à un conseiller de notre équipe support.\n\n")
                 append("Un collaborateur va prendre le relais directement sur ce fil WhatsApp d'ici quelques instants. Merci pour votre patience !")
             }
         }
 
         if (executedTools.any { it.startsWith("book_appointment") }) {
             return buildString {
-                append("📅 **Planification de votre créneau**\n\n")
-                append("J'ai pré-réservé un créneau pour vous demain avec un de nos spécialistes.\n\n")
-                append("Pour finaliser la confirmation, pourriez-vous simplement me préciser votre nom et votre ville ?")
+                append("📅 **Planification de votre rendez-vous**\n\n")
+                append("Nous serions ravis d'échanger avec vous ! Afin de vous fixer le créneau idéal avec un de nos spécialistes, pourriez-vous me préciser :\n")
+                append("• Le jour souhaité\n")
+                append("• Votre créneau horaire préféré\n")
+                append("• Votre nom et numéro de contact\n\n")
+                append("Un conseiller vous confirmera immédiatement ce rendez-vous !")
             }
         }
 
         if (executedTools.any { it.startsWith("get_product_price") }) {
+            val priceCall = executedTools.first { it.startsWith("get_product_price") }
             return buildString {
                 append("💼 **Tarif & Disponibilité en direct :**\n\n")
-                if (products.isNotEmpty()) {
+                if (priceCall.contains("found=true")) {
                     val targetProd = products.firstOrNull { prod ->
                         prod.title.lowercase(Locale.getDefault()).split(" ").any { kw -> kw.length >= 3 && qLower.contains(kw) }
-                    } ?: products.first()
-                    val price = targetProd.sellingPrice ?: targetProd.purchasePrice ?: 0.0
-                    val stockMsg = if (targetProd.stockQuantity > 0) "${targetProd.stockQuantity} unités en stock" else "Sur commande / réapprovisionnement"
-                    append("• **${targetProd.title}** : **${price.toInt()} ${targetProd.currency}**\n")
-                    append("• **Disponibilité** : $stockMsg\n")
-                    if (!targetProd.description.isNullOrBlank()) {
-                        append("• **Description** : ${targetProd.description}\n")
+                    } ?: products.firstOrNull()
+
+                    if (targetProd != null) {
+                        val price = targetProd.sellingPrice ?: targetProd.purchasePrice ?: 0.0
+                        val stockMsg = if (targetProd.stockQuantity > 0) "${targetProd.stockQuantity} unités en stock" else "Sur commande / réapprovisionnement"
+                        append("• **${targetProd.title}** : **${price.toInt()} ${targetProd.currency}**\n")
+                        append("• **Disponibilité** : $stockMsg\n")
+                        if (!targetProd.description.isNullOrBlank()) {
+                            append("• **Description** : ${targetProd.description}\n")
+                        }
+                        append("\n🚚 **Livraison rapide** partout au Maroc en 24-48h.\n")
+                        append("💵 **Paiement sécurisé à la livraison** (Cash on Delivery).\n\n")
+                        append("Souhaitez-vous commander cet article dès maintenant ?")
+                    } else {
+                        append("Nos tarifs varient selon les articles de notre boutique.\n")
+                        append("Indiquez-moi le nom exact de l'article qui vous intéresse afin que je vous confirme son prix et sa disponibilité en stock !")
                     }
-                    append("\n🚚 **Livraison rapide** partout au Maroc en 24-48h.\n")
-                    append("💵 **Paiement sécurisé à la livraison** (Cash on Delivery).\n\n")
-                    append("Souhaitez-vous commander cet article dès maintenant ?")
                 } else {
-                    append("Nos tarifs varient selon les articles et les quantités commandées.\n")
+                    append("Nos tarifs varient selon les articles et les modèles disponibles dans notre catalogue.\n")
                     append("Indiquez-moi le nom ou la référence de l'article qui vous intéresse afin que je vous confirme son prix exact !")
                 }
             }
@@ -300,17 +500,6 @@ object EdgeNeuralReasoningEngine {
                 qLower.contains("facturation") || qLower.contains("combien ca coute") ||
                 qLower.contains("combien coûte") || qLower.contains("payer") ||
                 qLower.contains("remise") || qLower.contains("promo")
-
-        val hasOrderIntent = qLower.contains("commande") ||
-                qLower.contains("commander") ||
-                qLower.contains("finaliser ma commande") ||
-                qLower.contains("je souhaite finaliser") ||
-                qLower.contains("passer commande") ||
-                qLower.contains("valider la commande") ||
-                qLower.contains("valider ma commande") ||
-                qLower.contains("je veux commander") ||
-                qLower.contains("je prends") ||
-                (qLower.contains("produit:") && (qLower.contains("catégorie:") || qLower.contains("prix:")))
 
         val hasSkepticismIntent = qLower.contains("fiable") || qLower.contains("arnaque") ||
                 qLower.contains("garantie") || qLower.contains("confiance") ||
@@ -386,33 +575,6 @@ object EdgeNeuralReasoningEngine {
         val nightNotice = if (isNightGuard) {
             "\n\n🌙 *Note d'astreinte* : Nos bureaux physiques sont actuellement fermés (horaires : 08h30 - 19h00). Mais je reste à votre entière disposition pour noter votre demande, vous renseigner et programmer un rappel dès demain matin !"
         } else ""
-
-        // 2.5 CASE: Order Processing (Top priority - E-commerce Storefront Order)
-        if (hasOrderIntent) {
-            val hasDeliveryInfo = (qLower.contains("adresse") && qLower.contains("ville")) ||
-                    qLower.contains("mon adresse") ||
-                    Regex("""\b0[5-7]\d{8}\b|\b\+212[5-7]\d{8}\b""").containsMatchIn(q)
-
-            if (hasDeliveryInfo) {
-                return "Merci beaucoup pour ces informations ! Un agent commercial va vous appeler sous peu pour finaliser et confirmer votre commande avec vous. Merci de votre confiance et bonne journée !"
-            } else {
-                val matchedProd = products.firstOrNull { prod ->
-                    prod.title.length >= 3 && qLower.contains(prod.title.lowercase(Locale.getDefault()))
-                } ?: products.firstOrNull()
-
-                val prodName = matchedProd?.title ?: Regex("""(?i)produit\s*:\s*([^\n\r,]+)""").find(q)?.groupValues?.get(1)?.trim() ?: "votre article"
-
-                return buildString {
-                    append("Bonjour ! 👋 Je vous confirme avec plaisir que $prodName est bien disponible en stock.\n\n")
-                    append("Pour préparer votre livraison, pourriez-vous me préciser :\n")
-                    append("• Nom complet\n")
-                    append("• Ville de livraison\n")
-                    append("• Adresse exacte\n")
-                    append("• Numéro de téléphone de contact\n\n")
-                    append("Un agent commercial va vous appeler sous peu pour finaliser et confirmer votre commande avec vous. Merci de votre confiance et bonne journée !")
-                }
-            }
-        }
 
         // 2.6 CASE: Hesitations & Skepticism
         if (hasSkepticismIntent) {

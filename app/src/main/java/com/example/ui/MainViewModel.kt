@@ -648,12 +648,14 @@ Invite chaleureusement le client à confirmer sa commande en fournissant son nom
         val knowledge = database.knowledgeDao().getSourcesForAgent(agent.id)
         val tools = database.mcpDao().getEnabledTools()
         val products = database.commerceDao().getAllProductsList()
+        val orders = database.commerceDao().getAllOrdersList()
         val result = com.example.domain.engine.AiEdgeQuantizerEngine.runAgentInference(
             agent = agent,
             customerQuery = testQuery,
             knowledgeSources = knowledge,
             mcpTools = tools,
-            products = products
+            products = products,
+            orders = orders
         )
         database.agentDao().recordAgentResponse(agent.id, result.latencyMs)
         return result

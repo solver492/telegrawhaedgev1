@@ -7,6 +7,7 @@ import com.example.data.local.entity.ProductEntity
 import com.example.data.local.entity.WhatsAppInstanceEntity
 import com.example.data.local.entity.WhatsAppMessageEntity
 import com.example.domain.engine.AiEdgeQuantizerEngine
+import com.example.domain.engine.EdgeNeuralReasoningEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -278,29 +279,36 @@ class BaileysService(
             temperature = if (matchedCategory != null) matchedCategory.aiAgentTemperature.toFloat() else selectedAgent.temperature
         )
 
+        val customerPhoneNum = senderJid.replace("@s.whatsapp.net", "").replace("@c.us", "")
+        val allOrders = try {
+            database.commerceDao().getAllOrdersList()
+        } catch (e: Exception) {
+            emptyList<com.example.data.local.entity.OrderEntity>()
+        }
+
         val inferenceResult = AiEdgeQuantizerEngine.runAgentInference(
             agent = effectiveAgent,
             customerQuery = messageText,
             knowledgeSources = knowledgeSources,
             mcpTools = mcpTools,
-            products = products
+            products = products,
+            orders = allOrders,
+            customerPhone = customerPhoneNum
         )
 
         // 6.5 Enregistrement automatique de la pré-commande e-commerce si un message de commande arrive
+        // Ne JAMAIS créer de commande sur une simple demande de suivi de colis ou statut
         try {
-            val qLower = messageText.lowercase(Locale.getDefault())
-            val isStoreOrder = qLower.contains("commande") || qLower.contains("produit:") ||
-                    qLower.contains("finaliser ma commande") || qLower.contains("je souhaite finaliser") ||
-                    qLower.contains("je veux commander")
+            val isExplicitTracking = EdgeNeuralReasoningEngine.isExplicitOrderTrackingQuery(messageText)
+            val isStoreOrder = !isExplicitTracking && EdgeNeuralReasoningEngine.isStorefrontOrderOrPurchase(messageText)
 
             if (isStoreOrder) {
                 val targetProduct = products.firstOrNull() ?: allProducts.firstOrNull { prod ->
-                    prod.title.length >= 3 && qLower.contains(prod.title.lowercase(Locale.getDefault()))
+                    prod.title.length >= 3 && messageText.lowercase(Locale.getDefault()).contains(prod.title.lowercase(Locale.getDefault()))
                 }
                 val orderProdName = targetProduct?.title ?: (Regex("""(?i)produit\s*:\s*([^\n\r,]+)""").find(messageText)?.groupValues?.get(1)?.trim() ?: "Produit Vitrine")
                 val orderPrice = targetProduct?.sellingPrice ?: (Regex("""(?i)prix\s*:\s*([0-9.]+)""").find(messageText)?.groupValues?.get(1)?.toDoubleOrNull() ?: 110.0)
                 val orderNum = "#CMD-${(1000..9999).random()}"
-                val customerPhoneNum = senderJid.replace("@s.whatsapp.net", "").replace("@c.us", "")
 
                 val newOrder = com.example.data.local.entity.OrderEntity(
                     id = "ord-${UUID.randomUUID().toString().take(8)}",

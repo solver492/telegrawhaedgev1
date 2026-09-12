@@ -150,6 +150,12 @@ interface CommerceDao {
     @Query("SELECT * FROM ecommerce_orders ORDER BY createdAt DESC")
     fun getAllOrders(): Flow<List<OrderEntity>>
 
+    @Query("SELECT * FROM ecommerce_orders ORDER BY createdAt DESC")
+    suspend fun getAllOrdersList(): List<OrderEntity>
+
+    @Query("SELECT * FROM ecommerce_orders WHERE orderNumber = :orderNumber OR id = :orderNumber LIMIT 1")
+    suspend fun findOrderByNumber(orderNumber: String): OrderEntity?
+
     @Query("SELECT * FROM ecommerce_orders WHERE status = 'PENDING_CONFIRMATION' ORDER BY createdAt DESC")
     fun getOrdersToCall(): Flow<List<OrderEntity>>
 
