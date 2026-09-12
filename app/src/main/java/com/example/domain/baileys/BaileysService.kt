@@ -365,14 +365,13 @@ class BaileysService(
 
     /**
      * Determines which agent should handle the message according to:
-     * 0. Category-based dedicated Agent (via product match or category keywords)
+     * 0. Category-based dedicated Agent (via product match, explicit header or category keywords)
      * 1. Assigned instance filter
-     * 2. Semantic Sales/Pricing routing
-     * 3. Keyword trigger matching
-     * 4. Operational schedule (e.g. 08:00 - 19:00 vs night guard)
-     * 5. Fallback agent
+     * 2. Keyword trigger matching (agent specific)
+     * 3. Operational schedule (e.g. 08:00 - 19:00 vs night guard)
+     * 4. Fallback agent
      */
-    private fun selectBestAgentForMessage(
+    fun selectBestAgentForMessage(
         agents: List<AgentEntity>,
         categories: List<CategoryEntity>,
         products: List<ProductEntity>,
@@ -449,26 +448,23 @@ class BaileysService(
             return RoutingDecision(null, "No agent configured in application", candidateCategory)
         }
 
-        val currentTimeStr = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-
-        // 2. Semantic Domain Priority: Sales / Offers / Pricing
-        val isSalesQuery = textLower.contains("vend") || textLower.contains("propos") ||
-                textLower.contains("prix") || textLower.contains("tarif") ||
-                textLower.contains("cout") || textLower.contains("coût") ||
-                textLower.contains("devis") || textLower.contains("offre") ||
-                textLower.contains("achet") || textLower.contains("catalog") ||
-                textLower.contains("produit") || textLower.contains("pack")
-
-        if (isSalesQuery) {
-            val commercialAgent = candidateAgents.firstOrNull {
-                it.role.equals("Commercial", ignoreCase = true) || it.name.contains("Vente", ignoreCase = true)
-            }
-            if (commercialAgent != null) {
-                return RoutingDecision(commercialAgent, "Aiguillage commercial (${commercialAgent.name})", candidateCategory)
-            }
+        // Si une catégorie a été détectée mais que son agent dédié n'est pas trouvé,
+        // relayer vers l'agent commercial de secours sans laisser d'autres mots-clés écraser la catégorie
+        if (candidateCategory != null) {
+            val fallbackCategoryAgent = candidateAgents.firstOrNull { it.id == "agent-sales-02" }
+                ?: candidateAgents.firstOrNull { it.role.equals("Commercial", ignoreCase = true) }
+                ?: candidateAgents.firstOrNull { it.isFallback }
+                ?: candidateAgents.firstOrNull()
+            return RoutingDecision(
+                fallbackCategoryAgent,
+                "Agent commercial de secours pour catégorie '${candidateCategory.name}'",
+                candidateCategory
+            )
         }
 
-        // 3. Keyword-based matching priority
+        val currentTimeStr = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+
+        // 2. Keyword-based matching priority (spécifique à chaque agent)
         for (agent in candidateAgents) {
             if (agent.activationMode == "KEYWORDS" || agent.keywordsCsv.isNotBlank()) {
                 val keywords = agent.keywordsCsv.split(",").map { it.trim().lowercase(Locale.getDefault()) }.filter { it.isNotBlank() && it != "*" }
@@ -479,7 +475,7 @@ class BaileysService(
             }
         }
 
-        // 4. Schedule-based matching
+        // 3. Schedule-based matching
         for (agent in candidateAgents) {
             if (agent.activationMode == "SCHEDULE") {
                 if (isTimeInRange(currentTimeStr, agent.scheduleStart, agent.scheduleEnd)) {
@@ -488,13 +484,13 @@ class BaileysService(
             }
         }
 
-        // 5. "ALWAYS" active agent
+        // 4. "ALWAYS" active agent
         val alwaysActive = candidateAgents.firstOrNull { it.activationMode == "ALWAYS" }
         if (alwaysActive != null) {
             return RoutingDecision(alwaysActive, "Default always-active responder", candidateCategory)
         }
 
-        // 6. Fallback agent
+        // 5. Fallback agent
         val fallback = candidateAgents.firstOrNull { it.isFallback } ?: candidateAgents.firstOrNull()
         return RoutingDecision(fallback, "General fallback agent", candidateCategory)
     }

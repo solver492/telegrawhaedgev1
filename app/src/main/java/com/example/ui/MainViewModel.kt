@@ -344,8 +344,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             // Migration / Purge des anciens prompts hardcodés de l'agent commercial
             val agentDao = database.agentDao()
-            val existingSalesAgent = agentDao.getAgentById("agent-sales-02")
-            if (existingSalesAgent != null && existingSalesAgent.systemPrompt.contains("Pack Starter")) {
+            var existingSalesAgent = agentDao.getAgentById("agent-sales-02")
+            if (existingSalesAgent == null) {
+                existingSalesAgent = AgentEntity(
+                    id = "agent-sales-02",
+                    name = "Agent Ventes & Boutique",
+                    role = "Commercial",
+                    systemPrompt = """Tu es un conseiller commercial dynamique et professionnel pour notre boutique en ligne sur WhatsApp.
+Tu renseignes les clients sur les articles du catalogue, confirmes les disponibilités et les prix en direct depuis la base de données.
+Tu présentes les fiches techniques, les caractéristiques et orientes les acheteurs avec courtoisie.
+Rappelle que la livraison est assurée sous 24h-48h partout au Maroc avec paiement sécurisé à la réception du colis (Cash on Delivery).
+Invite chaleureusement le client à confirmer sa commande en fournissant son nom complet, son numéro et sa ville.""".trimIndent(),
+                    modelId = "llama-3.2-1b-int4",
+                    isLocal = true,
+                    isActive = true,
+                    activationMode = "KEYWORDS",
+                    keywordsCsv = "prix,tarif,tarifs,devis,offre,offres,acheter,achat,pack,packs,vendre,vente,proposer,propose,catalogue,produit,produits,service,services,reduction,prospect",
+                    scheduleStart = "08:00",
+                    scheduleEnd = "20:00",
+                    assignedInstanceIdsCsv = "*",
+                    temperature = 0.7f,
+                    ragEnabled = true,
+                    mcpToolsCsv = "get_product_price,book_appointment",
+                    isFallback = false
+                )
+                agentDao.insertAgent(existingSalesAgent)
+            } else if (existingSalesAgent.systemPrompt.contains("Pack Starter")) {
                 agentDao.updateAgent(
                     existingSalesAgent.copy(
                         name = "Agent Ventes & Boutique",
@@ -356,6 +380,65 @@ Rappelle que la livraison est assurée sous 24h-48h partout au Maroc avec paieme
 Invite chaleureusement le client à confirmer sa commande en fournissant son nom complet, son numéro et sa ville.""".trimIndent()
                     )
                 )
+            }
+
+            // Assurer la présence de l'agent spécialisé Électronique & Tech
+            val existingTechAgent = agentDao.getAgentById("agent-tech-01")
+            if (existingTechAgent == null) {
+                val techAgent = AgentEntity(
+                    id = "agent-tech-01",
+                    name = "Karim - Électronique & Tech",
+                    role = "Commercial",
+                    systemPrompt = com.example.domain.commerce.DefaultCategoriesCatalog.buildStrictCommerceAgentPrompt(
+                        categoryName = "Électronique & High-Tech",
+                        categoryDescription = "Smartphones, ordinateurs, écouteurs sans fil, chargeurs et accessoires connectés"
+                    ),
+                    modelId = "llama-3.2-1b-int4",
+                    isLocal = true,
+                    isActive = true,
+                    activationMode = "KEYWORDS",
+                    keywordsCsv = "telephone,smartphone,ordinateur,ecouteur,chargeur,cable,airpods,samsung,iphone,xiaomi,casque,tech,electronique",
+                    scheduleStart = "08:00",
+                    scheduleEnd = "20:00",
+                    assignedInstanceIdsCsv = "*",
+                    temperature = 0.5f,
+                    ragEnabled = true,
+                    mcpToolsCsv = "get_product_price",
+                    isFallback = false
+                )
+                agentDao.insertAgent(techAgent)
+            }
+
+            // Assurer également l'alias agent-sales-01 pour toute dépendance legacy résiduelle
+            val existingLegacySales = agentDao.getAgentById("agent-sales-01")
+            if (existingLegacySales == null && existingSalesAgent != null) {
+                agentDao.insertAgent(
+                    existingSalesAgent.copy(
+                        id = "agent-sales-01",
+                        name = "Agent Ventes (Legacy)",
+                        isActive = true
+                    )
+                )
+            }
+
+            // MIGRATION AUTO-RÉPARATRICE DES CATÉGORIES EXISTANTES
+            // Réparer toutes les catégories dont assignedAgentId est invalide, orphelin ou pointe vers agent-sales-01
+            val currentAgents = agentDao.getAllAgentsList()
+            val validAgentIds = currentAgents.map { it.id }.toSet()
+            val allExistingCategories = database.commerceDao().getAllCategoriesList()
+            for (cat in allExistingCategories) {
+                val isTechCategory = cat.id == "cat-electronique" || cat.id == "sub-smartphones" || cat.slug == "electronique" || cat.slug == "smartphones-tablettes"
+                val targetAgentId = if (isTechCategory) "agent-tech-01" else "agent-sales-02"
+
+                val isInvalidOrMissing = cat.assignedAgentId.isNullOrBlank() ||
+                        !validAgentIds.contains(cat.assignedAgentId) ||
+                        cat.assignedAgentId == "agent-sales-01" ||
+                        cat.assignedAgentId == "agent-support-02" ||
+                        (isTechCategory && cat.assignedAgentId != "agent-tech-01")
+
+                if (isInvalidOrMissing) {
+                    database.commerceDao().updateCategory(cat.copy(assignedAgentId = targetAgentId))
+                }
             }
         }
     }

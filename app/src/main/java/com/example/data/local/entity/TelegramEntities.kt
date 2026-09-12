@@ -54,23 +54,41 @@ data class TelegramMessageEntity(
     val rawJson: String? = null
 ) {
     fun getMediaUrls(): List<String> {
-        return getMediaItems().mapNotNull { item ->
-            item.url ?: run {
-                val p = item.localPath ?: return@run null
-                val f = java.io.File(p)
-                if (f.exists() && f.canRead() && f.length() > 0) {
-                    p
-                } else if (p.contains("telegram_media/")) {
-                    val parts = p.substringAfter("telegram_media/").trimStart('/').split("/")
-                    if (parts.size >= 3) {
-                        val ch = parts[0]
-                        val mid = parts[1]
-                        val fn = parts.drop(2).joinToString("/")
-                        "http://127.0.0.1:8088/media/$ch/$mid/$fn"
-                    } else null
-                } else null
+        return getMediaItems().mapNotNull { it.url ?: it.localPath }
+    }
+
+    private fun resolveMediaItem(u: String?, p: String?): Pair<String?, String?> {
+        val path = p?.trim()
+        val url = u?.trim()
+
+        if (!path.isNullOrBlank()) {
+            val file = java.io.File(path)
+            if (file.exists() && file.canRead() && file.length() > 0) {
+                // Fichier accessible localement par le processus Android
+                return Pair(url ?: "file://$path", path)
             }
+
+            // Si le fichier est inaccessible (sandbox Termux ou non lisible), basculer sur la passerelle HTTP locale
+            val resolvedUrl = if (path.contains("telegram_media/")) {
+                val parts = path.substringAfter("telegram_media/").trimStart('/').split("/")
+                if (parts.size >= 3) {
+                    val ch = parts[0]
+                    val mid = parts[1]
+                    val fn = parts.drop(2).joinToString("/")
+                    "http://127.0.0.1:8088/media/$ch/$mid/$fn"
+                } else {
+                    val fileName = file.name
+                    "http://127.0.0.1:8088/media/$channelId/$messageId/$fileName"
+                }
+            } else if (file.name.isNotBlank()) {
+                "http://127.0.0.1:8088/media/$channelId/$messageId/${file.name}"
+            } else {
+                url
+            }
+            return Pair(resolvedUrl, null)
         }
+
+        return Pair(url, null)
     }
 
     fun getMediaItems(): List<ParsedMediaItem> {
@@ -84,11 +102,12 @@ data class TelegramMessageEntity(
                 for (i in 0 until len) {
                     val u = if (urlsArr != null && i < urlsArr.length()) urlsArr.getString(i) else null
                     val p = if (pathsArr != null && i < pathsArr.length()) pathsArr.getString(i) else null
-                    val isVid = (u?.let { isVideoUrlOrPath(it) } == true) ||
-                            (p?.let { isVideoUrlOrPath(it) } == true) ||
+                    val (resolvedUrl, resolvedPath) = resolveMediaItem(u, p)
+                    val isVid = (resolvedUrl?.let { isVideoUrlOrPath(it) } == true) ||
+                            (resolvedPath?.let { isVideoUrlOrPath(it) } == true) ||
                             (mediaType == "video" && len == 1)
-                    if (!u.isNullOrBlank() || !p.isNullOrBlank()) {
-                        items.add(ParsedMediaItem(url = u, localPath = p, isVideo = isVid))
+                    if (!resolvedUrl.isNullOrBlank() || !resolvedPath.isNullOrBlank()) {
+                        items.add(ParsedMediaItem(url = resolvedUrl, localPath = resolvedPath, isVideo = isVid))
                     }
                 }
             } catch (e: Exception) {
@@ -97,10 +116,11 @@ data class TelegramMessageEntity(
         }
         if (items.isEmpty()) {
             if (!mediaUrl.isNullOrBlank() || !localMediaPath.isNullOrBlank()) {
+                val (resolvedUrl, resolvedPath) = resolveMediaItem(mediaUrl, localMediaPath)
                 val isVid = (mediaType == "video") ||
-                        (mediaUrl?.let { isVideoUrlOrPath(it) } == true) ||
-                        (localMediaPath?.let { isVideoUrlOrPath(it) } == true)
-                items.add(ParsedMediaItem(url = mediaUrl, localPath = localMediaPath, isVideo = isVid))
+                        (resolvedUrl?.let { isVideoUrlOrPath(it) } == true) ||
+                        (resolvedPath?.let { isVideoUrlOrPath(it) } == true)
+                items.add(ParsedMediaItem(url = resolvedUrl, localPath = resolvedPath, isVideo = isVid))
             }
         }
 

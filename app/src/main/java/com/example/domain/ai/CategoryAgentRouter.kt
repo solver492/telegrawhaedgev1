@@ -25,7 +25,7 @@ data class AgentResponse(
 )
 
 class CategoryAgentRouter(
-    private val database: AppDatabase
+    private val database: AppDatabase? = null
 ) {
     companion object {
         private const val TAG = "CategoryAgentRouter"
@@ -93,7 +93,7 @@ class CategoryAgentRouter(
         userMessage: String,
         conversationContext: ConversationContext? = null
     ): AgentResponse = withContext(Dispatchers.IO) {
-        val commerceDao = database.commerceDao()
+        val commerceDao = database?.commerceDao() ?: error("Database required for routeMessageToAgent")
         val allCategories = commerceDao.getAllCategoriesList()
         val allProducts = commerceDao.getAllProductsList()
 
@@ -186,20 +186,35 @@ DIRECTIVES DE RÉPONSE:
     fun detectCategoryFromMessage(message: String, categories: List<CategoryEntity>): CategoryEntity? {
         val lower = message.lowercase(Locale.getDefault())
 
-        // 1. Recherche par mot-clé dans le dictionnaire
-        for ((slug, words) in CATEGORY_KEYWORDS) {
-            if (words.any { lower.contains(it) }) {
-                val matched = categories.firstOrNull { it.slug == slug }
-                if (matched != null) return matched
+        // 0. Détection explicite via préfixe structuré (ex: "Catégorie: Électronique & High-Tech", "Catégorie: Mode")
+        val categoryPrefixRegex = Regex("""(?:catégorie|categorie|rayon|category)\s*:\s*([^/\n,]+)""", RegexOption.IGNORE_CASE)
+        val prefixMatch = categoryPrefixRegex.find(message)
+        if (prefixMatch != null) {
+            val rawExtracted = prefixMatch.groupValues[1].trim().lowercase(Locale.getDefault())
+            val exactCat = categories.firstOrNull { cat ->
+                val cName = cat.name.lowercase(Locale.getDefault())
+                val cSlug = cat.slug.lowercase(Locale.getDefault())
+                cName == rawExtracted || cSlug == rawExtracted ||
+                        cName.contains(rawExtracted) || rawExtracted.contains(cName) ||
+                        (cName.split(" ", "&", "-").any { w -> w.length >= 4 && rawExtracted.contains(w) })
             }
+            if (exactCat != null) return exactCat
         }
 
-        // 2. Recherche par nom direct ou slug de catégorie
+        // 1. Recherche par nom direct ou slug de catégorie dans le texte
         for (cat in categories) {
             val catNameLower = cat.name.lowercase(Locale.getDefault())
             val catSlugLower = cat.slug.lowercase(Locale.getDefault())
             if (lower.contains(catNameLower) || lower.contains(catSlugLower)) {
                 return cat
+            }
+        }
+
+        // 2. Recherche par mot-clé dans le dictionnaire sémantique
+        for ((slug, words) in CATEGORY_KEYWORDS) {
+            if (words.any { lower.contains(it) }) {
+                val matched = categories.firstOrNull { it.slug == slug }
+                if (matched != null) return matched
             }
         }
 

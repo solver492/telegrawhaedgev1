@@ -85,7 +85,7 @@ Si le produit est en rupture ou si le client demande des alternatives / d'autres
             aiAgentName = "Agent Mode",
             aiAgentPrompt = buildStrictCommerceAgentPrompt("Mode & Vêtements", "Vêtements pour hommes, femmes, enfants, tenues traditionnelles"),
             aiAgentTemperature = 0.7,
-            assignedAgentId = "agent-sales-01"
+            assignedAgentId = "agent-sales-02"
         ),
         CategoryEntity(
             id = "cat-electronique",
@@ -100,7 +100,7 @@ Si le produit est en rupture ou si le client demande des alternatives / d'autres
             aiAgentName = "Agent Tech",
             aiAgentPrompt = buildStrictCommerceAgentPrompt("Électronique & High-Tech", "Smartphones, ordinateurs, écouteurs sans fil, chargeurs"),
             aiAgentTemperature = 0.7,
-            assignedAgentId = "agent-sales-01"
+            assignedAgentId = "agent-tech-01"
         ),
         CategoryEntity(
             id = "cat-maison-cuisine",
@@ -115,7 +115,7 @@ Si le produit est en rupture ou si le client demande des alternatives / d'autres
             aiAgentName = "Agent Maison",
             aiAgentPrompt = buildStrictCommerceAgentPrompt("Maison & Cuisine", "Électroménager, ustensiles de cuisine, décoration, aménagement"),
             aiAgentTemperature = 0.7,
-            assignedAgentId = "agent-sales-01"
+            assignedAgentId = "agent-sales-02"
         ),
         CategoryEntity(
             id = "cat-beaute-sante",
@@ -130,7 +130,7 @@ Si le produit est en rupture ou si le client demande des alternatives / d'autres
             aiAgentName = "Agent Beauté",
             aiAgentPrompt = buildStrictCommerceAgentPrompt("Beauté & Santé", "Cosmétiques, soins du visage, parfums, maquillage"),
             aiAgentTemperature = 0.7,
-            assignedAgentId = "agent-support-02"
+            assignedAgentId = "agent-sales-02"
         ),
         CategoryEntity(
             id = "cat-sports-loisirs",
@@ -145,7 +145,7 @@ Si le produit est en rupture ou si le client demande des alternatives / d'autres
             aiAgentName = "Agent Sports",
             aiAgentPrompt = buildStrictCommerceAgentPrompt("Sports & Loisirs", "Équipements de fitness, ballons, vêtements techniques, plein air"),
             aiAgentTemperature = 0.7,
-            assignedAgentId = "agent-sales-01"
+            assignedAgentId = "agent-sales-02"
         ),
         CategoryEntity(
             id = "cat-bebe-enfants",
@@ -160,7 +160,7 @@ Si le produit est en rupture ou si le client demande des alternatives / d'autres
             aiAgentName = "Agent Enfants",
             aiAgentPrompt = buildStrictCommerceAgentPrompt("Bébé & Enfants", "Vêtements bébé/enfant, puériculture et jouets"),
             aiAgentTemperature = 0.7,
-            assignedAgentId = "agent-support-02"
+            assignedAgentId = "agent-sales-02"
         ),
         CategoryEntity(
             id = "cat-chaussures-sacs",
@@ -175,7 +175,7 @@ Si le produit est en rupture ou si le client demande des alternatives / d'autres
             aiAgentName = "Agent Chaussures",
             aiAgentPrompt = buildStrictCommerceAgentPrompt("Chaussures & Sacs", "Sneakers, chaussures de ville, sacs à main et valises"),
             aiAgentTemperature = 0.7,
-            assignedAgentId = "agent-sales-01"
+            assignedAgentId = "agent-sales-02"
         ),
         CategoryEntity(
             id = "cat-accessoires-mode",
@@ -190,7 +190,7 @@ Si le produit est en rupture ou si le client demande des alternatives / d'autres
             aiAgentName = "Agent Accessoires",
             aiAgentPrompt = buildStrictCommerceAgentPrompt("Accessoires de Mode", "Montres, bijoux, ceintures, lunettes de soleil"),
             aiAgentTemperature = 0.7,
-            assignedAgentId = "agent-sales-01"
+            assignedAgentId = "agent-sales-02"
         ),
         CategoryEntity(
             id = "cat-alimentation-epicerie",
@@ -205,7 +205,7 @@ Si le produit est en rupture ou si le client demande des alternatives / d'autres
             aiAgentName = "Agent Alimentation",
             aiAgentPrompt = buildStrictCommerceAgentPrompt("Alimentation & Épicerie", "Épicerie salée/sucrée, thés, cafés et épices"),
             aiAgentTemperature = 0.7,
-            assignedAgentId = "agent-sales-01"
+            assignedAgentId = "agent-sales-02"
         ),
         CategoryEntity(
             id = "cat-livres-papeterie",
@@ -220,7 +220,7 @@ Si le produit est en rupture ou si le client demande des alternatives / d'autres
             aiAgentName = "Agent Culture",
             aiAgentPrompt = buildStrictCommerceAgentPrompt("Livres & Papeterie", "Fournitures scolaires, bureautique et livres"),
             aiAgentTemperature = 0.7,
-            assignedAgentId = "agent-support-02"
+            assignedAgentId = "agent-sales-02"
         ),
         CategoryEntity(
             id = "cat-automobile-moto",
@@ -235,7 +235,7 @@ Si le produit est en rupture ou si le client demande des alternatives / d'autres
             aiAgentName = "Agent Auto",
             aiAgentPrompt = buildStrictCommerceAgentPrompt("Automobile & Moto", "Accessoires auto, supports tech, entretien et casques"),
             aiAgentTemperature = 0.7,
-            assignedAgentId = "agent-sales-01"
+            assignedAgentId = "agent-sales-02"
         ),
         CategoryEntity(
             id = "cat-autres-produits",
@@ -250,7 +250,7 @@ Si le produit est en rupture ou si le client demande des alternatives / d'autres
             aiAgentName = "Agent Général",
             aiAgentPrompt = buildStrictCommerceAgentPrompt("Autres Produits & Cadeaux", "Produits divers, coffrets cadeaux et nouveautés"),
             aiAgentTemperature = 0.7,
-            assignedAgentId = "agent-sales-01"
+            assignedAgentId = "agent-sales-02"
         )
     )
 
@@ -269,7 +269,8 @@ Si le produit est en rupture ou si le client demande des alternatives / d'autres
             iconName = "Checkroom",
             displayOrder = 1,
             aiAgentName = "Agent Mode Homme",
-            aiAgentPrompt = buildStrictCommerceAgentPrompt("Vêtements Homme", "T-shirts, polos, chemises, pantalons et costumes")
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Vêtements Homme", "T-shirts, polos, chemises, pantalons et costumes"),
+            assignedAgentId = "agent-sales-02"
         ),
         CategoryEntity(
             id = "sub-vetements-femme",
@@ -282,7 +283,8 @@ Si le produit est en rupture ou si le client demande des alternatives / d'autres
             iconName = "Checkroom",
             displayOrder = 2,
             aiAgentName = "Agent Mode Femme",
-            aiAgentPrompt = buildStrictCommerceAgentPrompt("Vêtements Femme", "Robes, jupes, abayas, hijabs et pantalons")
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Vêtements Femme", "Robes, jupes, abayas, hijabs et pantalons"),
+            assignedAgentId = "agent-sales-02"
         ),
         CategoryEntity(
             id = "sub-smartphones",
@@ -295,7 +297,8 @@ Si le produit est en rupture ou si le client demande des alternatives / d'autres
             iconName = "Devices",
             displayOrder = 1,
             aiAgentName = "Agent Smartphones",
-            aiAgentPrompt = buildStrictCommerceAgentPrompt("Smartphones & Tablettes", "Smartphones, tablettes, accessoires")
+            aiAgentPrompt = buildStrictCommerceAgentPrompt("Smartphones & Tablettes", "Smartphones, tablettes, accessoires"),
+            assignedAgentId = "agent-tech-01"
         )
     )
 

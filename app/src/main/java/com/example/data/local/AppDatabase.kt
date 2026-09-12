@@ -28,6 +28,7 @@ import com.example.data.local.entity.ProductMediaEntity
 import com.example.data.local.entity.ShippingAgencyEntity
 import com.example.data.local.entity.SupplierEntity
 import com.example.data.local.entity.TelegramAccountEntity
+import com.example.domain.commerce.DefaultCategoriesCatalog
 import com.example.data.local.entity.TelegramChannelEntity
 import com.example.data.local.entity.TelegramLogEntity
 import com.example.data.local.entity.TelegramMessageEntity
@@ -191,13 +192,43 @@ Invite chaleureusement le client à confirmer sa commande en fournissant son nom
                 keywordsCsv = "prix,tarif,tarifs,devis,offre,offres,acheter,achat,pack,packs,vendre,vente,proposer,propose,catalogue,produit,produits,service,services,reduction,prospect",
                 scheduleStart = "08:00",
                 scheduleEnd = "20:00",
-                assignedInstanceIdsCsv = "inst-support-01,inst-sales-02",
+                assignedInstanceIdsCsv = "*",
                 temperature = 0.7f,
                 ragEnabled = true,
                 mcpToolsCsv = "get_product_price,book_appointment",
                 isFallback = false,
                 responseCount = 28,
                 avgLatencyMs = 185L
+            )
+
+            val techAgent = AgentEntity(
+                id = "agent-tech-01",
+                name = "Karim - Électronique & Tech",
+                role = "Commercial",
+                systemPrompt = DefaultCategoriesCatalog.buildStrictCommerceAgentPrompt(
+                    categoryName = "Électronique & High-Tech",
+                    categoryDescription = "Smartphones, ordinateurs, écouteurs sans fil, chargeurs et accessoires connectés"
+                ),
+                modelId = "llama-3.2-1b-int4",
+                isLocal = true,
+                isActive = true,
+                activationMode = "KEYWORDS",
+                keywordsCsv = "telephone,smartphone,ordinateur,ecouteur,chargeur,cable,airpods,samsung,iphone,xiaomi,casque,tech,electronique",
+                scheduleStart = "08:00",
+                scheduleEnd = "20:00",
+                assignedInstanceIdsCsv = "*",
+                temperature = 0.5f,
+                ragEnabled = true,
+                mcpToolsCsv = "get_product_price",
+                isFallback = false,
+                responseCount = 12,
+                avgLatencyMs = 175L
+            )
+
+            val legacySalesAgent = salesAgent.copy(
+                id = "agent-sales-01",
+                name = "Agent Ventes (Legacy)",
+                isActive = true
             )
 
             val nightAgent = AgentEntity(
@@ -225,13 +256,15 @@ Rassure le client, note sa demande et propose de réserver un créneau ou de lai
 
             agentDao.insertAgent(supportAgent)
             agentDao.insertAgent(salesAgent)
+            agentDao.insertAgent(techAgent)
+            agentDao.insertAgent(legacySalesAgent)
             agentDao.insertAgent(nightAgent)
 
             // 3. Initial Knowledge Sources (Supabase, Web, PDF, Text)
             knowDao.insertSource(
                 KnowledgeSourceEntity(
                     id = "know-supabase-01",
-                    agentId = "agent-sales-01",
+                    agentId = "agent-sales-02",
                     type = "SUPABASE",
                     title = "Supabase DB - Clients & Commandes",
                     targetUrlOrConfig = "https://xyzcompany.supabase.co/rest/v1/clients",
@@ -246,7 +279,7 @@ Rassure le client, note sa demande et propose de réserver un créneau ou de lai
             knowDao.insertSource(
                 KnowledgeSourceEntity(
                     id = "know-web-02",
-                    agentId = "agent-sales-01",
+                    agentId = "agent-sales-02",
                     type = "WEB_URL",
                     title = "Conditions de Vente & Livraison",
                     targetUrlOrConfig = "https://example.com/conditions-livraison",
@@ -272,7 +305,7 @@ Rassure le client, note sa demande et propose de réserver un créneau ou de lai
             knowDao.insertSource(
                 KnowledgeSourceEntity(
                     id = "know-text-04",
-                    agentId = "agent-sales-01",
+                    agentId = "agent-sales-02",
                     type = "TEXT_SNIPPET",
                     title = "Politique de Livraison & Horaires Maroc",
                     targetUrlOrConfig = "Snippet Local",
